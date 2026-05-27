@@ -1,14 +1,14 @@
 #include "main.h"
 #include "includes.h"
 
+
 int main(void)
 {
   #ifdef GD32F3XX
-    __enable_irq();  // required due to enabling interrupt after vector table relocation
+    __enable_irq();
   #endif
 
-  SystemClockInit();  // it depends on "variants.h" included in "includes.h"
-
+  SystemClockInit();
   SCB->VTOR = VECT_TAB_FLASH;
 
   HW_Init();
@@ -17,8 +17,10 @@ int main(void)
     dbg_print("Main Startup: Generic debug output is enabled.\n");
   #endif
 
-  for (; ;)
-  {
-    (*infoMenu.menu[infoMenu.cur])();
-  }
+  // Test : carré vert pour confirmer qu'on contrôle le système
+  GUI_Clear(0x0000);
+  GUI_SetColor(0x07E0);
+  GUI_FillRect(50, 50, 150, 150);
+
+  for (;;);
 }
