@@ -113,7 +113,7 @@ static inline void bmpToBuffer(uint16_t * buf, GUI_POINT startPoint, GUI_POINT e
     {
       for (uint8_t x = blockWidth; x < frameWidth; x++)
       {
-        buf[(y * frameWidth) + x] = infoSettings.bg_color;
+        buf[(y * frameWidth) + x] = BLACK;
       }
     }
 
@@ -123,7 +123,7 @@ static inline void bmpToBuffer(uint16_t * buf, GUI_POINT startPoint, GUI_POINT e
   // fill empty frame lines with background color
   for (uint16_t i = (blockLines * frameWidth); i < (frameLines * frameWidth); i++)
   {
-    buf[i] = infoSettings.bg_color;
+    buf[i] = BLACK;
   }
 }
 
@@ -161,7 +161,7 @@ uint16_t ICON_ReadPixel(uint32_t address, uint16_t w, uint16_t h, int16_t x, int
 {
   // out of range calls
   if (x > w || y > h)
-    return infoSettings.bg_color;
+    return BLACK;
 
   address += ((w * y) + x) * COLOR_BYTE_SIZE;
 

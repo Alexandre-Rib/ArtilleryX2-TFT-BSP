@@ -1,11 +1,14 @@
 #include "GUI.h"
 #include "LCD_Init.h"
+#include "lcd.h"
+#include "my_misc.h"
+#include "os_timer.h"
+#include "Language.h"
 #include <math.h>
 #include "LCD_Colors.h"
 #include "ui_draw.h"
 #include <string.h>
 #include <stdbool.h>
-#include "boot.h"
 #include "CharIcon.h"
 
 static uint16_t foreGroundColor = WHITE;
@@ -1395,4 +1398,10 @@ void GUI_DrawWindow(const WINDOW * window, const uint8_t * title, const uint8_t 
     GUI_DispStringInRectEOL(window->rect.x0 + margin, title_y1 + margin, window->rect.x1 - margin, info_y1 - margin, inf);
 
   GUI_RestoreColorDefault();
+}
+
+void GUI_RestoreColorDefault(void)
+{
+  GUI_SetColor(WHITE);
+  GUI_SetBkColor(BLACK);
 }

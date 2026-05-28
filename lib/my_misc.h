@@ -53,7 +53,7 @@ extern "C" {
 #define MINUTES(t) (t % (60 * 60) / 60)  // minutes remaining to next hour
 #define SECONDS(t) (t % 60)              // seconds remaining to next minute
 
-#define strtod strtod_ligth  // light weight strtod() function without exponential support
+// strtod_ligth: lightweight strtod without exponential support — call explicitly if needed
 
 #define strncpy(...) \
   do                 \

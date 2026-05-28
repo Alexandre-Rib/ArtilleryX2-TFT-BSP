@@ -220,5 +220,6 @@ typedef struct
 } WINDOW;
 
 void GUI_DrawWindow(const WINDOW * window, const uint8_t * title, const uint8_t * inf, bool actionBar);
+void GUI_RestoreColorDefault(void);
 
 #endif

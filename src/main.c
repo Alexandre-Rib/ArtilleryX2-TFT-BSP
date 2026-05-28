@@ -12,7 +12,7 @@ int main(void){
 
   // Test : carré vert pour confirmer qu'on contrôle le système
   GUI_Clear(0x0000);
-  GUI_SetColor(ORANGE);
+  GUI_SetColor(BLUE);
   GUI_FillRect(50, 50, 150, 150);
 
   for (;;);

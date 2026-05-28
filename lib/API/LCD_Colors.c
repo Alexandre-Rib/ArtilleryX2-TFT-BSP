@@ -1,9 +1,4 @@
 #include "LCD_Colors.h"
-#include "language_keywords.h"
-#include "menu.h"
-#include "Language.h"
-
-
 
 const uint16_t lcd_colors[LCD_COLOR_COUNT] = {
   WHITE,
@@ -22,23 +17,4 @@ const uint16_t lcd_colors[LCD_COLOR_COUNT] = {
   DARKGREEN,
   GRAY,
   DARKGRAY,
-};
-
-const LABEL lcd_color_names[LCD_COLOR_COUNT] = {
-  LABEL_WHITE,
-  LABEL_BLACK,
-  LABEL_RED,
-  LABEL_GREEN,
-  LABEL_BLUE,
-  LABEL_CYAN,
-  LABEL_MAGENTA,
-  LABEL_YELLOW,
-  LABEL_ORANGE,
-  LABEL_PURPLE,
-  LABEL_LIME,
-  LABEL_BROWN,
-  LABEL_DARKBLUE,
-  LABEL_DARKGREEN,
-  LABEL_GRAY,
-  LABEL_DARKGRAY
 };

@@ -1,8 +1,6 @@
 #ifndef _CONFIGURATION_H_
 #define _CONFIGURATION_H_
 
-#include "settings.h"
-
 #define CONFIG_VERSION 20250130
 
 //====================================================================================================

@@ -1,5 +1,5 @@
 #include "timer_pwm.h"
-#include "Mainboard_FlowControl.h"
+#include "includes.h"
 
 typedef struct {
   TIM_TypeDef * tim;
@@ -38,28 +38,26 @@ void TIM_PWM_Init(uint16_t tim_ch)
   uint16_t timerIndex = TIMER_GET_TIM(tim_ch);
   uint16_t channel = TIMER_GET_CH(tim_ch);
   const TIMER * timer = &pwmTimer[timerIndex];
-  uint32_t timerTmpClk = (timer->rcc_src == &RCC->APB1ENR) ? mcuClocks.PCLK1_Timer_Frequency : mcuClocks.PCLK2_Timer_Frequency;
+  /* On STM32F107: SYSCLK=72MHz, APB1 prescaler=/2 → APB1 timer clock=72MHz,
+     APB2 prescaler=/1 → APB2 timer clock=72MHz. Both equal SystemCoreClock. */
+  uint32_t timerTmpClk = SystemCoreClock;
 
-  *timer->rcc_src |= (1 << timer->rcc_bit);  // enable timer clock
+  *timer->rcc_src |= (1 << timer->rcc_bit);
 
-  // set PWM frequency to 500Hz
   timer->tim->ARR = 100 - 1;
-  timer->tim->PSC = timerTmpClk / (500 * 100) - 1;
+  timer->tim->PSC = timerTmpClk / (500 * 100) - 1;  // 500 Hz PWM
 
   switch (channel)
   {
-    case 0: timer->tim->CCMR1 |= (6<<4)  | (1<<3);  break;  // CH1 PWM1 mode
-    case 1: timer->tim->CCMR1 |= (6<<12) | (1<<11); break;  // CH2 PWM1 mode
-    case 2: timer->tim->CCMR2 |= (6<<4)  | (1<<3);  break;  // CH3 PWM1 mode
-    case 3: timer->tim->CCMR2 |= (6<<12) | (1<<11); break;  // CH4 PWM1 mode
+    case 0: timer->tim->CCMR1 |= (6<<4)  | (1<<3);  break;
+    case 1: timer->tim->CCMR1 |= (6<<12) | (1<<11); break;
+    case 2: timer->tim->CCMR2 |= (6<<4)  | (1<<3);  break;
+    case 3: timer->tim->CCMR2 |= (6<<12) | (1<<11); break;
   }
 
-  timer->tim->CCER |= 1 << (4 * channel);  // enable channle
-  timer->tim->CR1 = (1 << 7)               // auto-reload preload enable
-                  | (1 << 0);              // enbale timer
+  timer->tim->CCER |= 1 << (4 * channel);
+  timer->tim->CR1 = (1 << 7) | (1 << 0);
 
   if (timer->tim == TIM1 || timer->tim == TIM8)
-  { // TIM1 & TIM8 advanced timer need config BDTR register for PWM
-    timer->tim->BDTR |= 1 << 15;  // main output enable
-  }
+    timer->tim->BDTR |= 1 << 15;
 }

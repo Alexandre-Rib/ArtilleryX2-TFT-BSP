@@ -82,18 +82,7 @@ const char * textSelect(uint16_t index)
   if (index >= LABEL_NUM)
     return "";
 
-  switch (infoSettings.language)
-  {
-    case LANG_DEFAULT:
-      return default_pack[index];
-
-    case LANG_FLASH:
-      W25Qxx_ReadBuffer((uint8_t *) tempLabelString, getLabelFlashAddr(index), MAX_LANG_LABEL_LENGTH);
-      return tempLabelString;
-
-    default:
-      return "";
-  }
+  return default_pack[index];
 }
 
 void loadLabelText(char * buf, uint16_t index)

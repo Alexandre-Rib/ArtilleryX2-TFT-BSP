@@ -36,7 +36,7 @@ const SERIAL_CFG Serial[_UART_CNT] = {  // RM0008 Table 78-79
     {USART2, RCC_AHBPeriph_DMA1, DMA1, DMA1_Channel6},
     {USART3, RCC_AHBPeriph_DMA1, DMA1, DMA1_Channel3},
     {UART4,  RCC_AHBPeriph_DMA2, DMA2, DMA2_Channel3},
-    {UART5,  -1,                 -1    -1,          },  // UART5 don't support DMA
+    {UART5,  -1,                 -1,   -1,          },  // UART5 don't support DMA
   #endif
 };
 
