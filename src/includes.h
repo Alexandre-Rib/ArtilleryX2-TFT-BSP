@@ -1,7 +1,7 @@
 #ifndef INCLUDES_H
 #define INCLUDES_H
 
-#include "variants.h"          // pinout, LCD driver ID
+#include "mks_tft28.h"          // pinout, LCD driver ID
 #include "stm32f10x.h"         // MCU registers
 #include "stm32f10x_conf.h"    // StdPeriph config
 #include "HX8558.h"            // LCD driver

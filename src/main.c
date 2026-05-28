@@ -1,18 +1,13 @@
-#include "main.h"
-#include "includes.h"
+#include "HW_Init.h"
+#include "GUI.h"
 #include "LCD_Colors.h"
 
-int main(void){
-
-
-  SystemClockInit();
-  SCB->VTOR = VECT_TAB_FLASH;
-
+int main(void)
+{
   HW_Init();
 
-  // Test : carré vert pour confirmer qu'on contrôle le système
   GUI_Clear(0x0000);
-  GUI_SetColor(BLUE);
+  GUI_SetColor(RED);
   GUI_FillRect(50, 50, 150, 150);
 
   for (;;);

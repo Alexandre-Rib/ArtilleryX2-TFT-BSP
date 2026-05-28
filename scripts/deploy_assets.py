@@ -19,7 +19,7 @@ def personal_release_pipeline(source, target, env):
 
     # 3. Récupérer et copier le fichier binaire (.bin) généré par PlatformIO
     compiled_bin = str(target[0]) 
-    final_bin_name = f"MKSTFT28_{env_name}.bin"
+    final_bin_name = "MKSTFT28.bin"
     destination_bin = os.path.join(release_dir, final_bin_name)
 
     shutil.copyfile(compiled_bin, destination_bin)

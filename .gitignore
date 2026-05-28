@@ -14,6 +14,7 @@ desktop.ini
 *.bak
 *.idea
 *.s
+!*.S
 *.i
 *.ii
 *.swp
