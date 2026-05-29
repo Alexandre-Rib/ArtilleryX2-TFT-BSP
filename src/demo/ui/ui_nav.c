@@ -21,10 +21,20 @@
 #define REPEAT_RATE_MS   120u   // interval between subsequent repeats
 
 // ---------------------------------------------------------------------------
-// Touch calibration — runtime values, overridable via Nav_SetCalibration()
+// Touch orientation — adjust these three flags to match your panel mounting.
+//   TOUCH_SWAP_XY : 1 = ADC channels 0xD0/0x90 are transposed vs screen axes
+//   TOUCH_FLIP_X  : 1 = screen X increases as raw X decreases
+//   TOUCH_FLIP_Y  : 1 = screen Y increases as raw Y decreases
+// Try SWAP=1,FLIP_X=1,FLIP_Y=1 first. If one axis is still mirrored, clear
+// its FLIP flag. If both are correct but swapped, toggle SWAP.
 // ---------------------------------------------------------------------------
-#define TOUCH_X_CMD  0xD0   // XPT2046 channel: X axis
-#define TOUCH_Y_CMD  0x90   // XPT2046 channel: Y axis
+#define TOUCH_SWAP_XY  1
+#define TOUCH_FLIP_X   1
+#define TOUCH_FLIP_Y   1
+
+// XPT2046 measurement commands (do not change)
+#define TOUCH_X_CMD  0xD0
+#define TOUCH_Y_CMD  0x90
 
 static uint16_t cal_x_min = 200u;
 static uint16_t cal_x_max = 3900u;
@@ -70,8 +80,13 @@ static int16_t touch_raw_to_screen_x(uint16_t raw)
 {
     if (raw < cal_x_min) raw = cal_x_min;
     if (raw > cal_x_max) raw = cal_x_max;
+#if TOUCH_FLIP_X
+    int32_t px = (int32_t)(cal_x_max - raw) * LCD_WIDTH
+                 / (int32_t)(cal_x_max - cal_x_min);
+#else
     int32_t px = (int32_t)(raw - cal_x_min) * LCD_WIDTH
                  / (int32_t)(cal_x_max - cal_x_min);
+#endif
     return clamp16(px, 0, LCD_WIDTH - 1);
 }
 
@@ -79,8 +94,13 @@ static int16_t touch_raw_to_screen_y(uint16_t raw)
 {
     if (raw < cal_y_min) raw = cal_y_min;
     if (raw > cal_y_max) raw = cal_y_max;
+#if TOUCH_FLIP_Y
+    int32_t py = (int32_t)(cal_y_max - raw) * LCD_HEIGHT
+                 / (int32_t)(cal_y_max - cal_y_min);
+#else
     int32_t py = (int32_t)(raw - cal_y_min) * LCD_HEIGHT
                  / (int32_t)(cal_y_max - cal_y_min);
+#endif
     return clamp16(py, 0, LCD_HEIGHT - 1);
 }
 
@@ -129,12 +149,18 @@ static NavEvent_t poll_touch(void)
 
     if (pen && !touch_prev_pen) {
         // Rising edge: new tap
-        uint16_t rx = XPT2046_Repeated_Compare_AD(TOUCH_X_CMD);
-        uint16_t ry = XPT2046_Repeated_Compare_AD(TOUCH_Y_CMD);
+        uint16_t ra = XPT2046_Repeated_Compare_AD(TOUCH_X_CMD);
+        uint16_t rb = XPT2046_Repeated_Compare_AD(TOUCH_Y_CMD);
 
-        if (rx != 0 && ry != 0) {
-            touch_last_x  = touch_raw_to_screen_x(rx);
-            touch_last_y  = touch_raw_to_screen_y(ry);
+        if (ra != 0 && rb != 0) {
+            // Apply channel swap before axis mapping
+#if TOUCH_SWAP_XY
+            touch_last_x  = touch_raw_to_screen_x(rb);
+            touch_last_y  = touch_raw_to_screen_y(ra);
+#else
+            touch_last_x  = touch_raw_to_screen_x(ra);
+            touch_last_y  = touch_raw_to_screen_y(rb);
+#endif
             touch_prev_pen = true;
             return NAV_TOUCH;
         }
