@@ -82,7 +82,37 @@ cd ArtilleryX2-TFT-BSP
 pio run -e MKS_TFT28_V4_0
 ```
 
-Le binaire est généré dans `out/MKS_TFT28_V4_0/release/MKSTFT28.bin`.
+### Ce que fait le build (pipeline détaillée)
+
+```
+1. pre: auto_includes.py
+   ├── Scanne lib/ et ajoute tous les dossiers contenant un .h comme -I
+   └── Force la compilation de tous les .c de lib/ (remplace le LDF désactivé)
+
+2. Compilation / Link  (arm-none-eabi-gcc)
+   └── stm32f107xC_0x7000_iap.py remplace le linker script → offset 0x08007000
+
+3. post: deploy_assets.py
+   ├── Copie le .bin sous out/MKS_TFT28_V4_0/release/MKSTFT28.bin
+   ├── Copie res/pic/   → out/MKS_TFT28_V4_0/release/pic/   (si le dossier existe)
+   └── Copie res/sound/ → out/MKS_TFT28_V4_0/release/sound/ (si le dossier existe)
+```
+
+Le dossier `out/MKS_TFT28_V4_0/release/` contient tout ce qui va sur la carte SD.
+
+### Ajouter des assets graphiques (icônes BMP)
+
+Les assets sont des images BMP chargées dans la flash externe W25Q64 au premier démarrage.
+Pour les inclure dans la release :
+
+```
+res/
+  pic/       ← images BMP (icônes, logo…)
+  sound/     ← fichiers son (non utilisés dans ce BSP)
+```
+
+Créer ces dossiers à la racine du projet, y placer les fichiers.
+Après le build, ils apparaissent automatiquement dans `out/MKS_TFT28_V4_0/release/`.
 
 ## Flasher sur la carte
 
@@ -220,7 +250,37 @@ cd ArtilleryX2-TFT-BSP
 pio run -e MKS_TFT28_V4_0
 ```
 
-The binary is generated at `out/MKS_TFT28_V4_0/release/MKSTFT28.bin`.
+### Build pipeline
+
+```
+1. pre: auto_includes.py
+   ├── Scans lib/ and adds every directory containing a .h as an -I flag
+   └── Forces compilation of all .c files in lib/ (replaces the disabled LDF)
+
+2. Compile / Link  (arm-none-eabi-gcc)
+   └── stm32f107xC_0x7000_iap.py rewrites the linker script → 0x08007000 offset
+
+3. post: deploy_assets.py
+   ├── Copies the .bin to out/MKS_TFT28_V4_0/release/MKSTFT28.bin
+   ├── Copies res/pic/   → out/MKS_TFT28_V4_0/release/pic/   (if the folder exists)
+   └── Copies res/sound/ → out/MKS_TFT28_V4_0/release/sound/ (if the folder exists)
+```
+
+The `out/MKS_TFT28_V4_0/release/` folder contains everything that goes on the SD card.
+
+### Adding graphical assets (BMP icons)
+
+Assets are BMP images loaded into external W25Q64 flash on first boot.
+To include them in the release:
+
+```
+res/
+  pic/       ← BMP images (icons, logo…)
+  sound/     ← sound files (unused in this BSP)
+```
+
+Create these folders at the project root and place your files there.
+After each build they are automatically copied to `out/MKS_TFT28_V4_0/release/`.
 
 ## Flashing
 

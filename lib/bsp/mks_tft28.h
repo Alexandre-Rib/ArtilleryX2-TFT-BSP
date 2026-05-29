@@ -1,10 +1,7 @@
 #ifndef _MKS_TFT28_H_
 #define _MKS_TFT28_H_
 
-// Software settings (SYSTEM_LANGUAGE, serial port speeds, etc.)
-#include "Configuration.h"
-
-// MCU registers (stm32f10x.h also includes this file — header guards handle the circle)
+// MCU registers
 #include "stm32f10x.h"
 // GPIO pin name aliases (PA0…PF15)
 #include "STM32Fxx_Pins.h"
