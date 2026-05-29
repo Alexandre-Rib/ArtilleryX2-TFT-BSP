@@ -294,12 +294,12 @@ void SceneCalib_OnUpdate(uint32_t now_ms)
             draw_bar(BAR_Y_Y, ry, COL_BAR_Y);
             redraw_values();
 
-            // Map raw to screen using CURRENT calibration (shows drift)
-            int32_t nx_i = (int32_t)(rx - 200) * LCD_WIDTH  / (3900 - 200);
-            int32_t ny_i = (int32_t)(ry - 200) * LCD_HEIGHT / (3900 - 200);
+            // Map raw ADC directly into the crosshair area (X: full width, Y: CROSS_Y0..FOOTER_Y)
+            int32_t cross_h = FOOTER_Y - CROSS_Y0;
+            int32_t nx_i = (int32_t)(rx - 200) * LCD_WIDTH / (3900 - 200);
+            int32_t ny_i = CROSS_Y0 + (int32_t)(ry - 200) * cross_h / (3900 - 200);
             int16_t nx = (nx_i < 0) ? 0 : (nx_i >= LCD_WIDTH  ? LCD_WIDTH  - 1 : (int16_t)nx_i);
-            int16_t ny = (ny_i < 0) ? CROSS_Y0 : (ny_i >= FOOTER_Y ? FOOTER_Y - 2 : (int16_t)ny_i);
-            if (ny < CROSS_Y0) ny = (int16_t)CROSS_Y0 + 10;
+            int16_t ny = (ny_i < CROSS_Y0) ? (int16_t)CROSS_Y0 : (ny_i > FOOTER_Y - 2 ? (int16_t)(FOOTER_Y - 2) : (int16_t)ny_i);
 
             if (cross_x >= 0)
                 draw_crosshair(cross_x, cross_y, (uint16_t)COL_BG);
