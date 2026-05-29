@@ -27,8 +27,8 @@ carte, par exemple :
 |---|---|
 | Carte | Artillery "TFT Controller V1.0" (rebadge **MKS TFT28 V4.0**) |
 | MCU | **STM32F107VC** — Cortex-M3, 72 MHz, 64 KB RAM, 256 KB Flash |
-| Écran | **HX8558**, 320 × 240, interface SPI/FSMC |
-| Tactile | XPT2046, SPI |
+| Écran | **HX8558**, 320 × 240, interface parallèle 16 bits |
+| Tactile | XPT2046, SPI logiciel |
 | Flash externe | **Winbond W25Q64JV**, 8 Mo (polices, assets) |
 | Stockage | Lecteur SD + port USB-A (USB Host) |
 | Bootloader | MKS/Artillery V3.0.0 — flash via carte SD (`mkstft28.bin`) |
@@ -36,7 +36,7 @@ carte, par exemple :
 ## Ce que le BSP fournit
 
 - Initialisation des horloges (72 MHz, PLL via HSE 25 MHz)
-- Pilote LCD HX8558 complet (init, SetWindow, DMA)
+- Pilote LCD HX8558 complet (init, SetWindow)
 - API graphique : `GUI_Clear`, `GUI_FillRect`, `GUI_DrawLine`, `GUI_DrawPixel`, etc.
 - Pilote tactile XPT2046
 - Pilote flash externe W25Q64 (lecture / écriture / effacement)
@@ -95,13 +95,30 @@ Pas de ST-Link — le bootloader Artillery gère le flash via carte SD :
 
 > Si le firmware est cassé, remettre l'original Artillery sur la SD pour restaurer.
 
+## Configuration
+
+Les features du BSP sont activées par défaut. Elles peuvent être désactivées ou
+reconfigurées dans `platformio.ini` via `build_flags`.
+
+| Feature | Défaut | Pour désactiver |
+|---|---|---|
+| Bus LCD 16 bits | `LCD_DATA_16BIT=1` | `-DLCD_DATA_16BIT=0` |
+| Support carte SD | `SD_SPI_SUPPORT` défini | Ne pas définir + retirer `sd.c` / FatFS du build |
+| Support USB Host | `USB_FLASH_DRIVE_SUPPORT` défini | Ne pas définir + retirer `STM32_USB_HOST_Library/` |
+| Port série principal | `SERIAL_PORT=_USART2` | `-DSERIAL_PORT=_USART1` (ou autre) |
+
+> **Aucun `build_flags` de feature n'est nécessaire** pour la configuration
+> complète par défaut — `mks_tft28.h` contient toutes les valeurs de la carte.
+
+Référence complète des options : voir [`lib/bsp/mks_tft28.h`](lib/bsp/mks_tft28.h)
+
 ## Structure du projet
 
 ```
 src/              — main.c (point d'entrée)
 lib/
   bsp/            — Hardware pur : init, timers, CMSIS, fwlib, FatFS
-    Hal/          — Drivers composants : LCD HX8558, XPT2046, W25Qxx, SPI, UART, USB
+    drivers/      — Drivers composants : LCD HX8558, XPT2046, W25Qxx, SPI, UART, USB
     cmsis/        — CMSIS STM32F10x
     fwlib/        — Standard Peripheral Library STM32F10x
     Fatfs/        — FatFS
@@ -148,8 +165,8 @@ This BSP is designed as a foundation for standalone embedded projects on this bo
 |---|---|
 | Board | Artillery "TFT Controller V1.0" (rebadged **MKS TFT28 V4.0**) |
 | MCU | **STM32F107VC** — Cortex-M3, 72 MHz, 64 KB RAM, 256 KB Flash |
-| Display | **HX8558**, 320 × 240, SPI/FSMC interface |
-| Touch | XPT2046, SPI |
+| Display | **HX8558**, 320 × 240, 16-bit parallel interface |
+| Touch | XPT2046, software SPI |
 | External Flash | **Winbond W25Q64JV**, 8 MB (fonts, game assets) |
 | Storage | SD card reader + USB-A port (USB Host) |
 | Bootloader | MKS/Artillery V3.0.0 — flashed via SD card (`mkstft28.bin`) |
@@ -157,7 +174,7 @@ This BSP is designed as a foundation for standalone embedded projects on this bo
 ## What the BSP provides
 
 - Clock initialisation (72 MHz, PLL via 25 MHz HSE)
-- Full HX8558 LCD driver (init, SetWindow, DMA transfer)
+- Full HX8558 LCD driver (init, SetWindow)
 - Graphics API: `GUI_Clear`, `GUI_FillRect`, `GUI_DrawLine`, `GUI_DrawPixel`, etc.
 - XPT2046 touch driver
 - W25Q64 external flash driver (read / write / erase)
@@ -172,7 +189,7 @@ This BSP is designed as a foundation for standalone embedded projects on this bo
 ### 1. VS Code + PlatformIO extension
 
 Download [VS Code](https://code.visualstudio.com), then install the
-**PlatformIO IDE** extension from the marketplace (search for « PlatformIO »).
+**PlatformIO IDE** extension from the marketplace (search for "PlatformIO").
 
 That is **the only tool you need to install manually**. On the first build,
 PlatformIO automatically downloads:
@@ -216,13 +233,30 @@ No ST-Link required — the Artillery bootloader handles flashing via SD card:
 
 > If the firmware is broken, put the original Artillery firmware on the SD card to restore.
 
+## Configuration
+
+BSP features are enabled by default. They can be disabled or reconfigured
+in `platformio.ini` via `build_flags`.
+
+| Feature | Default | To disable |
+|---|---|---|
+| 16-bit LCD bus | `LCD_DATA_16BIT=1` | `-DLCD_DATA_16BIT=0` |
+| SD card support | `SD_SPI_SUPPORT` defined | Leave undefined + remove `sd.c` / FatFS from build |
+| USB Host support | `USB_FLASH_DRIVE_SUPPORT` defined | Leave undefined + remove `STM32_USB_HOST_Library/` |
+| Main serial port | `SERIAL_PORT=_USART2` | `-DSERIAL_PORT=_USART1` (or other) |
+
+> **No feature `build_flags` are needed** for the default full configuration —
+> `mks_tft28.h` already contains all board values.
+
+Full options reference: [mks_tft28_features.md](mks_tft28_features.md)
+
 ## Repository layout
 
 ```
 src/              — main.c (entry point)
 lib/
   bsp/            — Pure hardware: init, timers, CMSIS, fwlib, FatFS
-    Hal/          — Component drivers: LCD HX8558, XPT2046, W25Qxx, SPI, UART, USB
+    drivers/      — Component drivers: LCD HX8558, XPT2046, W25Qxx, SPI, UART, USB
     cmsis/        — CMSIS STM32F10x
     fwlib/        — STM32F10x Standard Peripheral Library
     Fatfs/        — FatFS

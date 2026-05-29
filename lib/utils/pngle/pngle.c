@@ -31,7 +31,6 @@
 
 #include "miniz.h"
 #include "pngle.h"
-#include "includes.h"
 
 #if defined(SERIAL_DEBUG_PORT) && defined(DEBUG_SERIAL_GENERIC)
 	//#define PNGLE_DEBUG

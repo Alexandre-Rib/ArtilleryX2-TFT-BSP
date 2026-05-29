@@ -2,10 +2,12 @@
 #define _FLASH_MAP_H_
 
 #include <stdint.h>
+#include "w25qxx.h"   // for W25QXX_SPI_PAGESIZE, W25QXX_SECTOR_SIZE
 
 // ---------------------------------------------------------------------------
-// Flash sector geometry
+// Flash geometry — re-exported so callers never include w25qxx.h directly
 // ---------------------------------------------------------------------------
+#define FLASH_PAGE_SIZE     W25QXX_SPI_PAGESIZE
 #define W25QXX_SECTOR_SIZE  0x1000u   // 4 KB
 
 // ---------------------------------------------------------------------------

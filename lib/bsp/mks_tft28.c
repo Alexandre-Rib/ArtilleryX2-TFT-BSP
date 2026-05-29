@@ -1,5 +1,3 @@
-#include "HW_Init.h"
-#include "stm32f10x.h"
 #include "mks_tft28.h"
 #include "delay.h"
 #include "os_timer.h"
@@ -7,7 +5,7 @@
 #include "LCD_Init.h"
 #include "xpt2046.h"
 
-void HW_Init(void)
+void MKS_TFT28_Init(void)
 {
   SystemClockInit();
   SCB->VTOR = VECT_TAB_FLASH;

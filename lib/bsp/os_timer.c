@@ -1,5 +1,5 @@
 #include "os_timer.h"
-#include "includes.h"
+#include "stm32f10x.h"
 
 OS_COUNTER os_counter = {0, 1000};
 

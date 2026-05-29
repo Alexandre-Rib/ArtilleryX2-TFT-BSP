@@ -2,7 +2,7 @@
 #include "LCD_Colors.h"
 #include "GPIO_Init.h"
 #include "delay.h"
-#include "LCD_Driver/HX8558.h"
+#include "HX8558.h"
 
 static void (* pLCD_SetDirection)(uint8_t rotate);
 static void (* pLCD_SetWindow)(uint16_t sx, uint16_t sy, uint16_t ex, uint16_t ey);

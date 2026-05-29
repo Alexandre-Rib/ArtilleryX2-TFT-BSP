@@ -3,9 +3,9 @@
 
 #include <stdbool.h>
 #include "mks_tft28.h"
-#include "w25qxx.h"
+#include "flash_map.h"
 
-#define MAX_LANG_LABEL_LENGTH W25QXX_SPI_PAGESIZE
+#define MAX_LANG_LABEL_LENGTH FLASH_PAGE_SIZE
 
 #define ENGLISH      0
 #define CHINESE      1

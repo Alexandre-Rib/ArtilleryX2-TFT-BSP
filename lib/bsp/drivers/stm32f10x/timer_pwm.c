@@ -1,5 +1,5 @@
 #include "timer_pwm.h"
-#include "includes.h"
+#include "stm32f10x.h"
 
 typedef struct {
   TIM_TypeDef * tim;

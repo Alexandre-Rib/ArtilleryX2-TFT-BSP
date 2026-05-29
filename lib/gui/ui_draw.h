@@ -3,7 +3,6 @@
 
 #include <stdbool.h>
 #include <stdint.h>
-#include "mks_tft28.h"  // for PORTRAIT_MODE etc.
 #include "GUI.h"       // for GUI_POINT etc.
 #include <string.h>
 
