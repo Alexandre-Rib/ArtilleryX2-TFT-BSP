@@ -1,27 +1,36 @@
+/**
+ * @file    keyboard.c
+ * @brief   USB HID keyboard driver — wraps ST USB Host HID class (MKS TFT28 BSP)
+ * @version 1.0
+ * @date    Created:       2026-05-29
+ *          Last modified: 2026-05-29
+ * @note    Developed with Claude Sonnet 4.6 (Anthropic)
+ */
+
 #include "keyboard.h"
 #include "usbh_hid_core.h"
 #include "usbh_hid_keybd.h"
 #include "usbh_usr.h"       // USB_OTG_Core, USB_Host
 #include "usbh_core.h"      // USBH_Process, USBH_Init
 
-// Stubs requis par usbh_hid_keybd.c et usbh_hid_mouse.c
+// Required stubs for usbh_hid_keybd.c and usbh_hid_mouse.c
 #include "usbh_hid_mouse.h"
 void USR_KEYBRD_Init(void) {}
 void USR_KEYBRD_ProcessData(uint8_t ascii)           { (void)ascii; }
 void USR_MOUSE_Init(void)                            {}
 void USR_MOUSE_ProcessData(HID_MOUSE_Data_TypeDef *d){ (void)d; }
 
-// Accès direct au buffer HID Boot Protocol (défini dans usbh_hid_core.c)
-// buff[0] = modificateurs, buff[1] = réservé, buff[2..7] = keycodes enfoncés
+// Direct access to the HID Boot Protocol report buffer (defined in usbh_hid_core.c).
+// buff[0] = modifiers, buff[1] = reserved, buff[2..7] = currently pressed keycodes
 extern HID_Machine_TypeDef HID_Machine;
 
 // ---------------------------------------------------------------------------
-// Tables keycode HID → byte (ISO-8859-1 pour les caractères accentués)
-// Taille : 0x66 = 102 entrées (keycodes 0x00 à 0x65)
-// Indexe : [shift][keycode]
+// Keycode-to-byte lookup tables (ISO-8859-1 for accented characters)
+// Size: 0x66 = 102 entries (keycodes 0x00 to 0x65)
+// Index: [shift][keycode]
 // ---------------------------------------------------------------------------
 static const uint8_t qwerty_map[2][0x66] = {
-  { // sans shift
+  { // no shift
     0,    0,    0,    0,    'a',  'b',  'c',  'd',   // 0x00-0x07
     'e',  'f',  'g',  'h',  'i',  'j',  'k',  'l',   // 0x08-0x0F
     'm',  'n',  'o',  'p',  'q',  'r',  's',  't',   // 0x10-0x17
@@ -36,7 +45,7 @@ static const uint8_t qwerty_map[2][0x66] = {
     '\n', '1',  '2',  '3',  '4',  '5',  '6',  '7',   // 0x58-0x5F
     '8',  '9',  '0',  '.',  0,    0,               // 0x60-0x65
   },
-  { // avec shift
+  { // shift
     0,    0,    0,    0,    'A',  'B',  'C',  'D',
     'E',  'F',  'G',  'H',  'I',  'J',  'K',  'L',
     'M',  'N',  'O',  'P',  'Q',  'R',  'S',  'T',
@@ -54,14 +63,14 @@ static const uint8_t qwerty_map[2][0x66] = {
 };
 
 static const uint8_t azerty_map[2][0x66] = {
-  { // sans shift — remappage AZERTY (ISO-8859-1 pour accentués)
-    0,    0,    0,    0,    'q',  'b',  'c',  'd',   // a→q
+  { // no shift — AZERTY remapping (ISO-8859-1 for accented chars)
+    0,    0,    0,    0,    'q',  'b',  'c',  'd',   // a->q
     'e',  'f',  'g',  'h',  'i',  'j',  'k',  'l',
-    ',',  'n',  'o',  'p',  'a',  'r',  's',  't',   // m→, q→a
-    'u',  'v',  'z',  'x',  'y',  'w',  '&',  0xE9, // w→z, z→w, 2→é
-    '"',  '\'', '(',  '-',  0xE8, '_',  0xE7, 0xE0, // è,ç,à
+    ',',  'n',  'o',  'p',  'a',  'r',  's',  't',   // m->, q->a
+    'u',  'v',  'z',  'x',  'y',  'w',  '&',  0xE9, // w->z, z->w, 2->e acute
+    '"',  '\'', '(',  '-',  0xE8, '_',  0xE7, 0xE0, // e grave, c cedilla, a grave
     '\n', 0x1B, '\b', '\t', ' ',  ')',  '=',  '^',
-    '$',  '*',  0,    'm',  0xF9, 0xB2, ';',  ':',  // ù,²
+    '$',  '*',  0,    'm',  0xF9, 0xB2, ';',  ':',  // u grave, superscript 2
     '!',  0,    0,    0,    0,    0,    0,    0,
     0,    0,    0,    0,    0,    0,    0,    0,
     0,    0,    0,    0,    0,    0,    0,    0,
@@ -69,14 +78,14 @@ static const uint8_t azerty_map[2][0x66] = {
     '\n', '1',  '2',  '3',  '4',  '5',  '6',  '7',
     '8',  '9',  '0',  '.',  0,    0,
   },
-  { // avec shift
+  { // shift
     0,    0,    0,    0,    'Q',  'B',  'C',  'D',
     'E',  'F',  'G',  'H',  'I',  'J',  'K',  'L',
     '?',  'N',  'O',  'P',  'A',  'R',  'S',  'T',
     'U',  'V',  'Z',  'X',  'Y',  'W',  '1',  '2',
     '3',  '4',  '5',  '6',  '7',  '8',  '9',  '0',
-    '\n', 0x1B, '\b', '\t', ' ',  0xB0, '+',  0,    // °
-    0xA3, 0xB5, 0,    'M',  '%',  0,    '.',  '/',  // £,µ
+    '\n', 0x1B, '\b', '\t', ' ',  0xB0, '+',  0,    // degree sign
+    0xA3, 0xB5, 0,    'M',  '%',  0,    '.',  '/',  // pound, micro
     '%',  0,    0,    0,    0,    0,    0,    0,
     0,    0,    0,    0,    0,    0,    0,    0,
     0,    0,    0,    0,    0,    0,    0,    0,
@@ -87,14 +96,14 @@ static const uint8_t azerty_map[2][0x66] = {
 };
 
 static const uint8_t qwertz_map[2][0x66] = {
-  { // sans shift
+  { // no shift
     0,    0,    0,    0,    'a',  'b',  'c',  'd',
     'e',  'f',  'g',  'h',  'i',  'j',  'k',  'l',
     'm',  'n',  'o',  'p',  'q',  'r',  's',  't',
-    'u',  'v',  'w',  'x',  'z',  'y',  '1',  '2',  // w↔z, z↔y
+    'u',  'v',  'w',  'x',  'z',  'y',  '1',  '2',  // w<->z, z<->y
     '3',  '4',  '5',  '6',  '7',  '8',  '9',  '0',
-    '\n', 0x1B, '\b', '\t', ' ',  '-',  '=',  0xFC, // ü
-    '+',  '#',  0,    0xF6, 0xE4, '^',  ',',  '.',  // ö,ä
+    '\n', 0x1B, '\b', '\t', ' ',  '-',  '=',  0xFC, // u umlaut
+    '+',  '#',  0,    0xF6, 0xE4, '^',  ',',  '.',  // o umlaut, a umlaut
     '-',  0,    0,    0,    0,    0,    0,    0,
     0,    0,    0,    0,    0,    0,    0,    0,
     0,    0,    0,    0,    0,    0,    0,    0,
@@ -102,14 +111,14 @@ static const uint8_t qwertz_map[2][0x66] = {
     '\n', '1',  '2',  '3',  '4',  '5',  '6',  '7',
     '8',  '9',  '0',  '.',  0,    0,
   },
-  { // avec shift
+  { // shift
     0,    0,    0,    0,    'A',  'B',  'C',  'D',
     'E',  'F',  'G',  'H',  'I',  'J',  'K',  'L',
     'M',  'N',  'O',  'P',  'Q',  'R',  'S',  'T',
     'U',  'V',  'W',  'X',  'Z',  'Y',  '!',  '"',
-    0xA7, '$',  '%',  '&',  '/',  '(',  ')',  '=',  // §
-    '\n', 0x1B, '\b', '\t', ' ',  '_',  '`',  0xDC, // Ü
-    '*',  '\'', 0,    0xD6, 0xC4, 0xB0, ';',  ':',  // Ö,Ä,°
+    0xA7, '$',  '%',  '&',  '/',  '(',  ')',  '=',  // section sign
+    '\n', 0x1B, '\b', '\t', ' ',  '_',  '`',  0xDC, // U umlaut
+    '*',  '\'', 0,    0xD6, 0xC4, 0xB0, ';',  ':',  // O umlaut, A umlaut, degree
     '_',  0,    0,    0,    0,    0,    0,    0,
     0,    0,    0,    0,    0,    0,    0,    0,
     0,    0,    0,    0,    0,    0,    0,    0,
@@ -120,7 +129,7 @@ static const uint8_t qwertz_map[2][0x66] = {
 };
 
 // ---------------------------------------------------------------------------
-// État interne
+// Internal state
 // ---------------------------------------------------------------------------
 static KB_LAYOUT current_layout = KB_LAYOUT_QWERTY;
 static uint8_t   last_keycode   = 0;
@@ -128,7 +137,7 @@ static uint8_t   last_modifiers = 0;
 static uint8_t   new_key        = 0;
 
 // ---------------------------------------------------------------------------
-// Callback appelé par usbh_hid_keybd.c quand un rapport clavier arrive
+// Callback invoked by usbh_hid_keybd.c when a new key-press event arrives
 // ---------------------------------------------------------------------------
 void Keyboard_ReportCallback(uint8_t modifiers, uint8_t keycode)
 {
@@ -141,7 +150,7 @@ void Keyboard_ReportCallback(uint8_t modifiers, uint8_t keycode)
 }
 
 // ---------------------------------------------------------------------------
-// API publique
+// Public API
 // ---------------------------------------------------------------------------
 
 void Keyboard_Init(void)
@@ -151,8 +160,7 @@ void Keyboard_Init(void)
   last_modifiers = 0;
   new_key        = 0;
 
-  // Initialise l'USB Host avec la classe HID (HID_cb = USBH_Class_cb_TypeDef).
-  // Note : incompatible avec MSC simultané — choisir l'un ou l'autre.
+  // Initialise USB Host with HID class (incompatible with MSC simultaneously).
   extern USBH_Class_cb_TypeDef HID_cb;
   USBH_Init(&USB_OTG_Core,
              USB_OTG_FS_CORE_ID,
@@ -173,8 +181,8 @@ bool Keyboard_IsConnected(void)
 
 uint8_t Keyboard_GetKeycode(void)
 {
-  // Lecture directe du buffer HID Boot Protocol : reflète l'état courant
-  // (touche maintenue = retourne le keycode ; relâchée = retourne 0)
+  // Read directly from the HID Boot Protocol buffer: reflects current state
+  // (key held -> returns keycode; key released -> returns 0)
   return HID_Machine.buff[2];
 }
 

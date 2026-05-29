@@ -1,3 +1,12 @@
+/**
+ * @file    keyboard.h
+ * @brief   USB HID keyboard driver public API (MKS TFT28 BSP)
+ * @version 1.0
+ * @date    Created:       2026-05-29
+ *          Last modified: 2026-05-29
+ * @note    Developed with Claude Sonnet 4.6 (Anthropic)
+ */
+
 #ifndef _KEYBOARD_H_
 #define _KEYBOARD_H_
 
@@ -5,7 +14,7 @@
 #include <stdbool.h>
 
 // ---------------------------------------------------------------------------
-// Layouts clavier supportés
+// Supported keyboard layouts
 // ---------------------------------------------------------------------------
 typedef enum {
   KB_LAYOUT_QWERTY = 0,   // US/UK
@@ -14,7 +23,7 @@ typedef enum {
 } KB_LAYOUT;
 
 // ---------------------------------------------------------------------------
-// Modificateurs (Byte 0 du rapport HID Boot Protocol)
+// Modifier flags (byte 0 of HID Boot Protocol report)
 // ---------------------------------------------------------------------------
 #define KB_MOD_LCTRL   (1 << 0)
 #define KB_MOD_LSHIFT  (1 << 1)
@@ -30,7 +39,7 @@ typedef enum {
 #define KB_MOD_ALT     (KB_MOD_LALT   | KB_MOD_RALT)
 
 // ---------------------------------------------------------------------------
-// Keycodes HID USB spéciaux (non imprimables)
+// USB HID keycodes — non-printable special keys
 // ---------------------------------------------------------------------------
 #define KB_KEY_NONE        0x00
 #define KB_KEY_UP          0x52
@@ -56,32 +65,32 @@ typedef enum {
 #define KB_KEY_F12         0x45
 
 // ---------------------------------------------------------------------------
-// API publique
+// Public API
 // ---------------------------------------------------------------------------
 
-// Initialise la classe HID dans la pile USB Host
+// Initialise the HID class in the USB Host stack
 void     Keyboard_Init(void);
 
-// Doit être appelé régulièrement depuis la boucle principale
+// Must be called repeatedly from the main loop
 void     Keyboard_Process(void);
 
-// Vrai si un clavier est connecté et énuméré
+// Returns true if a keyboard is connected and enumerated
 bool     Keyboard_IsConnected(void);
 
-// Dernier keycode USB reçu (0 si aucune touche)
+// Current keycode from the HID report buffer (0 if no key held)
 uint8_t  Keyboard_GetKeycode(void);
 
-// Modificateurs actifs (masque KB_MOD_*)
+// Current modifier mask from the HID report buffer (KB_MOD_* flags)
 uint8_t  Keyboard_GetModifiers(void);
 
-// Convertit un keycode USB en caractère ASCII selon le layout actif.
-// Retourne 0 si non imprimable.
+// Converts a USB keycode to an ASCII character for the active layout.
+// Returns 0 if the key is not printable.
 char     Keyboard_ToChar(uint8_t keycode, uint8_t modifiers);
 
-// Change le layout actif (défaut : QWERTY)
+// Change the active layout (default: QWERTY)
 void     Keyboard_SetLayout(KB_LAYOUT layout);
 
-// Vrai si une nouvelle touche a été pressée depuis le dernier appel
+// Returns true if a new key-press event occurred since the last call
 bool     Keyboard_HasNewKey(void);
 
 #endif
