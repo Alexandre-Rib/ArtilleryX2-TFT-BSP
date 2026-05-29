@@ -45,4 +45,8 @@ void Nav_GetTouchPos(int16_t *x, int16_t *y);
 void Nav_SetCalibration(uint16_t x_min, uint16_t x_max,
                         uint16_t y_min, uint16_t y_max);
 
+// Read back the current calibration constants.
+void Nav_GetCalibration(uint16_t *x_min, uint16_t *x_max,
+                        uint16_t *y_min, uint16_t *y_max);
+
 #endif

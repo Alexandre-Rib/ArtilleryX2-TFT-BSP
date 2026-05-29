@@ -211,3 +211,12 @@ void Nav_SetCalibration(uint16_t x_min, uint16_t x_max,
     cal_y_min = y_min;
     cal_y_max = y_max;
 }
+
+void Nav_GetCalibration(uint16_t *x_min, uint16_t *x_max,
+                        uint16_t *y_min, uint16_t *y_max)
+{
+    if (x_min) *x_min = cal_x_min;
+    if (x_max) *x_max = cal_x_max;
+    if (y_min) *y_min = cal_y_min;
+    if (y_max) *y_max = cal_y_max;
+}
