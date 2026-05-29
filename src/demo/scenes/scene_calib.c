@@ -277,27 +277,29 @@ void SceneCalib_OnUpdate(uint32_t now_ms)
     bool pen = (XPT2046_Read_Pen() == 0);   // TPEN active-low
 
     if (pen) {
-        uint16_t rx = XPT2046_Repeated_Compare_AD(CAL_X_CMD);
-        uint16_t ry = XPT2046_Repeated_Compare_AD(CAL_Y_CMD);
+        // 0xD0 = physical vertical axis → screen Y
+        // 0x90 = physical horizontal axis → screen X
+        uint16_t ch_vert = XPT2046_Repeated_Compare_AD(CAL_X_CMD);   // 0xD0
+        uint16_t ch_horiz = XPT2046_Repeated_Compare_AD(CAL_Y_CMD);  // 0x90
 
-        if (rx != 0 && ry != 0) {
-            raw_x = rx;
-            raw_y = ry;
+        if (ch_vert != 0 && ch_horiz != 0) {
+            raw_x = ch_horiz;   // horizontal → displayed as X
+            raw_y = ch_vert;    // vertical   → displayed as Y
             has_data = true;
 
-            if (rx < min_x) min_x = rx;
-            if (rx > max_x) max_x = rx;
-            if (ry < min_y) min_y = ry;
-            if (ry > max_y) max_y = ry;
+            if (ch_horiz < min_x) min_x = ch_horiz;
+            if (ch_horiz > max_x) max_x = ch_horiz;
+            if (ch_vert  < min_y) min_y = ch_vert;
+            if (ch_vert  > max_y) max_y = ch_vert;
 
-            draw_bar(BAR_X_Y, rx, COL_BAR_X);
-            draw_bar(BAR_Y_Y, ry, COL_BAR_Y);
+            draw_bar(BAR_X_Y, ch_horiz, COL_BAR_X);
+            draw_bar(BAR_Y_Y, ch_vert,  COL_BAR_Y);
             redraw_values();
 
-            // Map raw ADC directly into the crosshair area (X: full width, Y: CROSS_Y0..FOOTER_Y)
+            // Map into crosshair area: horizontal→screen X, vertical→screen Y
             int32_t cross_h = FOOTER_Y - CROSS_Y0;
-            int32_t nx_i = (int32_t)(rx - 200) * LCD_WIDTH / (3900 - 200);
-            int32_t ny_i = CROSS_Y0 + (int32_t)(ry - 200) * cross_h / (3900 - 200);
+            int32_t nx_i = (int32_t)(ch_horiz - 200) * LCD_WIDTH / (3900 - 200);
+            int32_t ny_i = CROSS_Y0 + (int32_t)(ch_vert - 200) * cross_h / (3900 - 200);
             int16_t nx = (nx_i < 0) ? 0 : (nx_i >= LCD_WIDTH  ? LCD_WIDTH  - 1 : (int16_t)nx_i);
             int16_t ny = (ny_i < CROSS_Y0) ? (int16_t)CROSS_Y0 : (ny_i > FOOTER_Y - 2 ? (int16_t)(FOOTER_Y - 2) : (int16_t)ny_i);
 

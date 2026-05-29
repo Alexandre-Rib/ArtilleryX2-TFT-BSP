@@ -28,9 +28,9 @@
 // Try SWAP=1,FLIP_X=1,FLIP_Y=1 first. If one axis is still mirrored, clear
 // its FLIP flag. If both are correct but swapped, toggle SWAP.
 // ---------------------------------------------------------------------------
-#define TOUCH_SWAP_XY  1
-#define TOUCH_FLIP_X   1
-#define TOUCH_FLIP_Y   1
+#define TOUCH_SWAP_XY  1   // 0xD0=physical vertical, 0x90=physical horizontal
+#define TOUCH_FLIP_X   0
+#define TOUCH_FLIP_Y   0
 
 // XPT2046 measurement commands (do not change)
 #define TOUCH_X_CMD  0xD0
