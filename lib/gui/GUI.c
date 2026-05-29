@@ -76,14 +76,8 @@ void GUI_CancelRange(void)
 
 void GUI_Clear(uint16_t color)
 {
-  uint32_t index = 0;
-
   LCD_SetWindow(0, 0, LCD_WIDTH - 1, LCD_HEIGHT - 1);
-
-  for (index = 0; index < LCD_WIDTH * LCD_HEIGHT; index++)
-  {
-    LCD_WR_16BITS_DATA(color);
-  }
+  LCD_FillColor(color, (uint32_t)LCD_WIDTH * LCD_HEIGHT);
 }
 
 /** @brief Draw a pixel/point
@@ -118,17 +112,8 @@ void GUI_DrawPoint(uint16_t x, uint16_t y)
  */
 void GUI_FillRect(uint16_t sx, uint16_t sy, uint16_t ex, uint16_t ey)
 {
-  uint16_t i = 0, j = 0;
-
   LCD_SetWindow(sx, sy, ex - 1, ey - 1);
-
-  for (i = sx; i < ex; i++)
-  {
-    for (j = sy; j < ey; j++)
-    {
-      LCD_WR_16BITS_DATA(foreGroundColor);
-    }
-  }
+  LCD_FillColor(foreGroundColor, (uint32_t)(ex - sx) * (ey - sy));
 }
 
 void GUI_FillPrect(const GUI_RECT * rect)
@@ -144,17 +129,8 @@ void GUI_FillPrect(const GUI_RECT * rect)
  */
 void GUI_ClearRect(uint16_t sx, uint16_t sy, uint16_t ex, uint16_t ey)
 {
-  uint16_t i = 0, j = 0;
-
-  LCD_SetWindow( sx, sy, ex - 1, ey - 1);
-
-  for (i = sx; i < ex; i++)
-  {
-    for (j = sy; j < ey; j++)
-    {
-      LCD_WR_16BITS_DATA(backGroundColor);
-    }
-  }
+  LCD_SetWindow(sx, sy, ex - 1, ey - 1);
+  LCD_FillColor(backGroundColor, (uint32_t)(ex - sx) * (ey - sy));
 }
 
 void GUI_ClearPrect(const GUI_RECT * rect)
@@ -171,17 +147,8 @@ void GUI_ClearPrect(const GUI_RECT * rect)
  */
 void GUI_FillRectColor(uint16_t sx, uint16_t sy, uint16_t ex, uint16_t ey, uint16_t color)
 {
-  uint16_t i = 0, j = 0;
-
   LCD_SetWindow(sx, sy, ex - 1, ey - 1);
-
-  for (i = sx; i < ex; i++)
-  {
-    for (j = sy; j < ey; j++)
-    {
-      LCD_WR_16BITS_DATA(color);
-    }
-  }
+  LCD_FillColor(color, (uint32_t)(ex - sx) * (ey - sy));
 }
 
 void GUI_FillRectArry(uint16_t sx, uint16_t sy, uint16_t ex, uint16_t ey, uint8_t * arry)

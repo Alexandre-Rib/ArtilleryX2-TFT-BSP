@@ -177,6 +177,35 @@ void LCD_WR_DATA(uint16_t data)
   LCD_CS_SET;
 }
 
+// Burst fill : CS et RS positionnés une seule fois pour N pixels identiques.
+// 3 ops/pixel au lieu de 6 → ~2× plus rapide, tearing réduit de moitié.
+void LCD_FillColor(uint16_t color, uint32_t count)
+{
+#if LCD_DATA_16BIT == 1
+  LCD_RS_SET;
+  LCD_CS_CLR;
+  while (count--)
+  {
+    DATAOUT(color);
+    LCD_WR_CLR;
+    LCD_WR_SET;
+  }
+  LCD_CS_SET;
+#else
+  // Bus 8 bits : deux écritures par pixel
+  uint8_t hi = (color >> 8) & 0xFF;
+  uint8_t lo =  color       & 0xFF;
+  LCD_RS_SET;
+  LCD_CS_CLR;
+  while (count--)
+  {
+    DATAOUT(hi); LCD_WR_CLR; LCD_WR_SET;
+    DATAOUT(lo); LCD_WR_CLR; LCD_WR_SET;
+  }
+  LCD_CS_SET;
+#endif
+}
+
 uint16_t LCD_RD_DATA(void)
 {
   #if defined(MKS_TFT)
