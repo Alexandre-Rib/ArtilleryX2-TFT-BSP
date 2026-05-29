@@ -24,6 +24,7 @@
 #include "scene_image.h"
 #include "scene_anim.h"
 #include "scene_keyboard.h"
+#include "scene_calib.h"
 #include "keyboard.h"
 #include "GUI.h"
 #include "LCD_Colors.h"
@@ -61,7 +62,7 @@ static Button_t buttons[MENU_COUNT] = {
     { BTN_X(0), BTN_Y(0), BTN_W, BTN_H, "Image\nFlash/SD", BTN_NORMAL   },
     { BTN_X(1), BTN_Y(0), BTN_W, BTN_H, "Animation\n+ Sound",  BTN_NORMAL   },
     { BTN_X(2), BTN_Y(0), BTN_W, BTN_H, "Keyboard\nLive",      BTN_NORMAL   },
-    { BTN_X(0), BTN_Y(1), BTN_W, BTN_H, "---",                 BTN_DISABLED },
+    { BTN_X(0), BTN_Y(1), BTN_W, BTN_H, "Touch\nCalib",         BTN_NORMAL   },
     { BTN_X(1), BTN_Y(1), BTN_W, BTN_H, "---",                 BTN_DISABLED },
     { BTN_X(2), BTN_Y(1), BTN_W, BTN_H, "---",                 BTN_DISABLED },
 };
@@ -70,7 +71,7 @@ static const Scene_t scenes[MENU_COUNT] = {
     { SceneImage_OnEnter,    SceneImage_OnUpdate,    SceneImage_OnExit    },
     { SceneAnim_OnEnter,     SceneAnim_OnUpdate,     SceneAnim_OnExit     },
     { SceneKeyboard_OnEnter, SceneKeyboard_OnUpdate, SceneKeyboard_OnExit },
-    { NULL, NULL, NULL },
+    { SceneCalib_OnEnter,    SceneCalib_OnUpdate,    SceneCalib_OnExit    },
     { NULL, NULL, NULL },
     { NULL, NULL, NULL },
 };
@@ -133,7 +134,10 @@ static int8_t nav_move(int8_t idx, NavEvent_t ev)
         case NAV_UP:    row = (row + MENU_ROWS - 1) % MENU_ROWS; break;
         default: return idx;
     }
-    return row * MENU_COLS + col;
+    int8_t next = (int8_t)(row * MENU_COLS + col);
+    // Skip disabled slots — keep current position
+    if (buttons[next].state == BTN_DISABLED) return idx;
+    return next;
 }
 
 static void handle_menu_event(NavEvent_t ev)
