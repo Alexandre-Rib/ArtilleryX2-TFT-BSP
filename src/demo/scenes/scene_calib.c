@@ -353,8 +353,12 @@ static bool     proc_prev_pen;
 static void proc_corner(int s, uint16_t col)
 {
     int16_t x = CX[s], y = CY[s];
-    GUI_FillRectColor(x, y, x+CORNER_SZ, y+CORNER_SZ, col);
-    int16_t cx = x + CORNER_SZ/2, cy = y + CORNER_SZ/2;
+    // Clip bottom corners to FOOTER_Y — no shared pixels with footer buttons
+    int16_t y_end = (y + CORNER_SZ > FOOTER_Y) ? FOOTER_Y : (y + CORNER_SZ);
+    GUI_FillRectColor(x, y, x+CORNER_SZ, y_end, col);
+    // Crosshair clamped inside the drawn area
+    int16_t cx = x + CORNER_SZ / 2;
+    int16_t cy = (y + y_end) / 2;
     GUI_SetColor(WHITE);
     GUI_DrawLine(cx-12, cy, cx+12, cy);
     GUI_DrawLine(cx, cy-12, cx, cy+12);
@@ -388,23 +392,50 @@ static void proc_summary(void)
     }
 }
 
-static void proc_save(bool flash_btn)
+// Footer for procedure: buttons confined to center zone (CORNER_SZ..LCD_WIDTH-CORNER_SZ)
+// so they never share pixels with the corner touch targets.
+// SAVE only appears once all 4 corners are captured.
+static void proc_draw_footer(bool save_flash)
+{
+    int16_t fy   = FOOTER_Y;
+    int16_t mid  = LCD_WIDTH / 2;
+    int16_t lx0  = CORNER_SZ;          // left button start  (= 64)
+    int16_t rx1  = LCD_WIDTH - CORNER_SZ; // right button end  (= 256)
+    int16_t cy   = fy + FOOTER_H / 2;
+
+    // Outer zones (align with corner columns) — neutral black
+    GUI_FillRectColor(0,   fy, lx0, LCD_HEIGHT, 0x0000u);
+    GUI_FillRectColor(rx1, fy, LCD_WIDTH, LCD_HEIGHT, 0x0000u);
+
+    // Left center: QUIT / back
+    GUI_FillRectColor(lx0, fy, mid, LCD_HEIGHT, COL_BTN_BACK);
+    icon_back((lx0 + mid) / 2, cy);
+
+    // Right center: SAVE — only when all 4 corners are done
+    if (proc_step >= 4) {
+        uint16_t col = save_flash ? COL_PACTIVE : COL_BTN_SAVE;
+        GUI_FillRectColor(mid, fy, rx1, LCD_HEIGHT, col);
+        icon_save((mid + rx1) / 2, cy);
+    } else {
+        GUI_FillRectColor(mid, fy, rx1, LCD_HEIGHT, 0x2104u);  // dark gray — inactive
+    }
+}
+
+static void proc_save(void)
 {
     if (proc_min_x >= proc_max_x || proc_min_y >= proc_max_y) return;
-    if (flash_btn) {
-        // Brief yellow confirmation flash on Save button
-        int16_t mid = LCD_WIDTH / 2, fy = FOOTER_Y, cy = fy + FOOTER_H/2;
-        GUI_FillRectColor(mid, fy, LCD_WIDTH, LCD_HEIGHT, COL_PACTIVE);
-        icon_save(mid + mid/2, cy);
-        Delay_ms(200);
-    }
+
+    // Yellow flash on Save button as confirmation
+    proc_draw_footer(true);
+    Delay_ms(200);
+
     Settings_t s;
     s.touch_x_min=proc_min_x; s.touch_x_max=proc_max_x;
     s.touch_y_min=proc_min_y; s.touch_y_max=proc_max_y;
     Settings_Save(&s);
     Nav_SetCalibration(proc_min_x, proc_max_x, proc_min_y, proc_max_y);
-    // Restore Save button
-    draw_footer(COL_BTN_BACK, COL_BTN_SAVE, icon_back, icon_save);
+
+    proc_draw_footer(false);
 }
 
 static bool proc_update_tick(uint32_t now_ms)
@@ -420,9 +451,9 @@ static bool proc_update_tick(uint32_t now_ms)
         }
     }
 
-    // Keyboard: Enter = save
-    if (Keyboard_HasNewKey() && Keyboard_GetKeycode() == KB_KEY_ENTER)
-        proc_save(true);
+    // Keyboard: Enter = save (only when complete)
+    if (proc_step >= 4 && Keyboard_HasNewKey() && Keyboard_GetKeycode() == KB_KEY_ENTER)
+        proc_save();
 
     bool pen = (XPT2046_Read_Pen() == 0);
     if (pen && !proc_prev_pen) {
@@ -430,9 +461,9 @@ static bool proc_update_tick(uint32_t now_ms)
         uint16_t ch_h = XPT2046_Repeated_Compare_AD(CAL_HORIZ_CMD);
         if (ch_v != 0 && ch_h != 0) {
             uint8_t btn = check_footer(ch_h, ch_v);
-            if (btn == 1) { proc_prev_pen = true; return true; }   // QUIT
-            if (btn == 2) { proc_save(true); }
-            else if (proc_step < 4) {
+            if (btn == 1) { proc_prev_pen = true; return true; }         // QUIT
+            if (btn == 2 && proc_step >= 4) { proc_save(); }             // SAVE (only when done)
+            else if (btn == 0 && proc_step < 4) {
                 // Capture corner
                 if (ch_h < proc_min_x) proc_min_x = ch_h;
                 if (ch_h > proc_max_x) proc_max_x = ch_h;
@@ -442,16 +473,17 @@ static bool proc_update_tick(uint32_t now_ms)
                 proc_corner(proc_step, COL_PDONE);
                 proc_step++;
                 proc_dots();
+                proc_draw_footer(false);  // refresh footer — SAVE appears on step 4
                 if (proc_step >= 4) {
+                    // Auto-save + summary
                     Delay_ms(150);
                     GUI_FillRectColor(0, 0, LCD_WIDTH, LCD_HEIGHT, COL_PDONE);
                     Delay_ms(100);
-                    // Redraw with all-done state
                     GUI_Clear(0x0000u);
                     for (int i=0;i<4;i++) proc_corner(i, COL_PDONE);
                     proc_dots();
-                    draw_footer(COL_BTN_BACK, COL_BTN_SAVE, icon_back, icon_save);
-                    proc_save(false);
+                    proc_draw_footer(false);
+                    proc_save();
                     proc_summary();
                 }
             }
@@ -490,7 +522,7 @@ void SceneCalib_OnUpdate(uint32_t now_ms)
             for (int i=0;i<4;i++) proc_corner(i, COL_PINACT);
             proc_corner(0, COL_PACTIVE);
             proc_dots();
-            draw_footer(COL_BTN_BACK, COL_BTN_SAVE, icon_back, icon_save);
+            proc_draw_footer(false);  // SAVE hidden until all 4 corners done
         }
     } else {
         if (proc_update_tick(now_ms)) {
