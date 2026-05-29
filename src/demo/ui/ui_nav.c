@@ -30,7 +30,7 @@
 // ---------------------------------------------------------------------------
 #define TOUCH_SWAP_XY  1   // 0xD0=physical vertical, 0x90=physical horizontal
 #define TOUCH_FLIP_X   0
-#define TOUCH_FLIP_Y   0
+#define TOUCH_FLIP_Y   1   // vertical axis: ADC increases going UP
 
 // XPT2046 measurement commands (do not change)
 #define TOUCH_X_CMD  0xD0

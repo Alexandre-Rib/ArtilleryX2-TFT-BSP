@@ -299,7 +299,7 @@ void SceneCalib_OnUpdate(uint32_t now_ms)
             // Map into crosshair area: horizontal→screen X, vertical→screen Y
             int32_t cross_h = FOOTER_Y - CROSS_Y0;
             int32_t nx_i = (int32_t)(ch_horiz - 200) * LCD_WIDTH / (3900 - 200);
-            int32_t ny_i = CROSS_Y0 + (int32_t)(ch_vert - 200) * cross_h / (3900 - 200);
+            int32_t ny_i = CROSS_Y0 + (int32_t)(3900 - ch_vert) * cross_h / (3900 - 200);
             int16_t nx = (nx_i < 0) ? 0 : (nx_i >= LCD_WIDTH  ? LCD_WIDTH  - 1 : (int16_t)nx_i);
             int16_t ny = (ny_i < CROSS_Y0) ? (int16_t)CROSS_Y0 : (ny_i > FOOTER_Y - 2 ? (int16_t)(FOOTER_Y - 2) : (int16_t)ny_i);
 
