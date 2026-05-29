@@ -41,12 +41,13 @@ carte, par exemple :
 - Pilote tactile XPT2046
 - Pilote flash externe W25Q64 (lecture / écriture / effacement)
 - FatFS (accès SD)
-- USB Host (MSC — clés USB)
+- USB Host MSC (clés USB) et **HID clavier USB**
 - Timers : SysTick (Delay_us/ms), TIM7 (OS_Timer 1 ms)
 - UART / Serial (DMA)
 - Chargement d'assets BMP depuis SD vers flash externe
 - **Buzzer PWM** — pilote TIM5_CH3 sur PA2 avec contrôle de fréquence et de volume
 - **LCD burst fill** — `LCD_FillColor(color, count)` : CS/RS positionnés une seule fois pour N pixels, 3 ops GPIO/pixel au lieu de 6 (~2× plus rapide sur les fills)
+- **Clavier USB HID** — Boot Protocol, layouts QWERTY/AZERTY/QWERTZ, lecture d'état en continu
 
 ## Pré-requis
 
@@ -174,11 +175,12 @@ reconfigurées dans `platformio.ini` via `build_flags`.
 |---|---|---|
 | Bus LCD 16 bits | `LCD_DATA_16BIT=1` | `-DLCD_DATA_16BIT=0` |
 | Support carte SD | `SD_SPI_SUPPORT` défini | Ne pas définir + retirer `sd.c` / FatFS du build |
-| Support USB Host | `USB_FLASH_DRIVE_SUPPORT` défini | Ne pas définir + retirer `STM32_USB_HOST_Library/` |
+| Support USB Host | `USB_FLASH_DRIVE_SUPPORT` + `USE_USB_OTG_FS` définis | Ne pas définir + retirer `STM32_USB_HOST_Library/` |
 | Port série principal | `SERIAL_PORT=_USART2` | `-DSERIAL_PORT=_USART1` (ou autre) |
 
-> **Aucun `build_flags` de feature n'est nécessaire** pour la configuration
-> complète par défaut — `mks_tft28.h` contient toutes les valeurs de la carte.
+> **`USB_FLASH_DRIVE_SUPPORT` et `USE_USB_OTG_FS` doivent toujours être définis ensemble.**
+> `USB_FLASH_DRIVE_SUPPORT` active les fonctions BSP USB réelles (sinon stubs vides → linker error).
+> `USE_USB_OTG_FS` sélectionne le PHY FS et active les tailles FIFO dans `usb_conf.h` (sans lui, le core OTG ne se configure pas).
 
 Référence complète des options : voir [`lib/bsp/mks_tft28.h`](lib/bsp/mks_tft28.h)
 
@@ -249,12 +251,13 @@ This BSP is designed as a foundation for standalone embedded projects on this bo
 - XPT2046 touch driver
 - W25Q64 external flash driver (read / write / erase)
 - FatFS (SD card access)
-- USB Host (MSC — USB flash drives)
+- USB Host MSC (flash drives) and **USB HID keyboard**
 - Timers: SysTick (Delay_us/ms), TIM7 (1 ms OS_Timer)
 - UART / Serial with DMA
 - BMP asset loader (SD → external flash)
 - **Buzzer PWM** — TIM5_CH3 driver on PA2 with frequency and volume control
 - **LCD burst fill** — `LCD_FillColor(color, count)`: CS/RS set once for N pixels, 3 GPIO ops/pixel instead of 6 (~2× faster fills)
+- **USB HID keyboard** — Boot Protocol, QWERTY/AZERTY/QWERTZ layouts, continuous key-state reading
 
 ## Prerequisites
 
@@ -382,11 +385,12 @@ in `platformio.ini` via `build_flags`.
 |---|---|---|
 | 16-bit LCD bus | `LCD_DATA_16BIT=1` | `-DLCD_DATA_16BIT=0` |
 | SD card support | `SD_SPI_SUPPORT` defined | Leave undefined + remove `sd.c` / FatFS from build |
-| USB Host support | `USB_FLASH_DRIVE_SUPPORT` defined | Leave undefined + remove `STM32_USB_HOST_Library/` |
+| USB Host support | `USB_FLASH_DRIVE_SUPPORT` + `USE_USB_OTG_FS` defined | Leave undefined + remove `STM32_USB_HOST_Library/` |
 | Main serial port | `SERIAL_PORT=_USART2` | `-DSERIAL_PORT=_USART1` (or other) |
 
-> **No feature `build_flags` are needed** for the default full configuration —
-> `mks_tft28.h` already contains all board values.
+> **`USB_FLASH_DRIVE_SUPPORT` and `USE_USB_OTG_FS` must always be defined together.**
+> `USB_FLASH_DRIVE_SUPPORT` activates the real USB BSP functions (without it, only empty stubs are compiled → linker error).
+> `USE_USB_OTG_FS` selects the FS PHY and enables the FIFO sizes in `usb_conf.h` (without it, the OTG core has no configuration).
 
 Full options reference: [mks_tft28_features.md](mks_tft28_features.md)
 
