@@ -4,6 +4,7 @@
 #include "w25qxx.h"
 #include "LCD_Init.h"
 #include "xpt2046.h"
+#include "buzzer.h"
 
 void MKS_TFT28_Init(void)
 {
@@ -20,4 +21,5 @@ void MKS_TFT28_Init(void)
   W25Qxx_Init();
   LCD_Init();
   XPT2046_Init(XPT2046_TPEN, XPT2046_CS, XPT2046_SCK, XPT2046_MISO, XPT2046_MOSI);
+  Buzzer_Init();
 }

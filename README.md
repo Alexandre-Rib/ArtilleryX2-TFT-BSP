@@ -45,6 +45,7 @@ carte, par exemple :
 - Timers : SysTick (Delay_us/ms), TIM7 (OS_Timer 1 ms)
 - UART / Serial (DMA)
 - Chargement d'assets BMP depuis SD vers flash externe
+- **Buzzer PWM** — pilote TIM5_CH3 sur PA2 avec contrôle de fréquence et de volume
 
 ## Pré-requis
 
@@ -113,6 +114,47 @@ res/
 
 Créer ces dossiers à la racine du projet, y placer les fichiers.
 Après le build, ils apparaissent automatiquement dans `out/MKS_TFT28_V4_0/release/`.
+
+## Driver Buzzer
+
+> Driver généré par [Claude](https://claude.ai) (Anthropic) — testé et validé sur hardware.
+
+La carte embarque un **buzzer passif** sur **PA2**, piloté en **PWM matériel via TIM5_CH3**.
+Contrairement à un simple toggle GPIO, cette approche permet de contrôler à la fois la
+**fréquence** (note musicale) et le **volume** (duty cycle), sans charge CPU.
+
+### API
+
+```c
+#include "buzzer.h"
+
+Buzzer_PlayTone(uint16_t hz, uint8_t volume, uint16_t ms);  // bloquant
+Buzzer_Set(uint16_t hz, uint8_t volume);                    // non bloquant
+Buzzer_Stop(void);
+Buzzer_Beep(void);                                          // bip UI 2 kHz / 50 ms
+```
+
+- `volume` : 0 (silence) → 100 (maximum). Traduit en duty cycle 0–50 %.
+- Plage de fréquences : ~30 Hz à 20 kHz.
+
+### Exemple validé — gamme Do–Do
+
+```c
+#include "buzzer.h"
+
+// Gamme ascendante à volume 20 (discret)
+Buzzer_PlayTone(262, 20, 200);   // Do
+Buzzer_PlayTone(294, 20, 200);   // Ré
+Buzzer_PlayTone(330, 20, 200);   // Mi
+Buzzer_PlayTone(349, 20, 200);   // Fa
+Buzzer_PlayTone(392, 20, 200);   // Sol
+Buzzer_PlayTone(440, 20, 200);   // La
+Buzzer_PlayTone(494, 20, 200);   // Si
+Buzzer_PlayTone(523, 20, 300);   // Do (octave)
+```
+
+> **Note :** si la carte possède un buzzer **actif** (oscillateur intégré) plutôt que passif,
+> le contrôle de fréquence n'a pas d'effet — seul le volume (on/off) fonctionnera.
 
 ## Flasher sur la carte
 
@@ -213,6 +255,7 @@ This BSP is designed as a foundation for standalone embedded projects on this bo
 - Timers: SysTick (Delay_us/ms), TIM7 (1 ms OS_Timer)
 - UART / Serial with DMA
 - BMP asset loader (SD → external flash)
+- **Buzzer PWM** — TIM5_CH3 driver on PA2 with frequency and volume control
 
 ## Prerequisites
 
@@ -281,6 +324,47 @@ res/
 
 Create these folders at the project root and place your files there.
 After each build they are automatically copied to `out/MKS_TFT28_V4_0/release/`.
+
+## Buzzer driver
+
+> Driver written by [Claude](https://claude.ai) (Anthropic) — tested and validated on hardware.
+
+The board includes a **passive buzzer** on **PA2**, driven by **hardware PWM via TIM5_CH3**.
+Unlike a simple GPIO toggle, this approach gives independent control over both **frequency**
+(musical note) and **volume** (duty cycle), with zero CPU overhead during playback.
+
+### API
+
+```c
+#include "buzzer.h"
+
+Buzzer_PlayTone(uint16_t hz, uint8_t volume, uint16_t ms);  // blocking
+Buzzer_Set(uint16_t hz, uint8_t volume);                    // non-blocking
+Buzzer_Stop(void);
+Buzzer_Beep(void);                                          // UI beep 2 kHz / 50 ms
+```
+
+- `volume`: 0 (silent) → 100 (maximum). Mapped internally to 0–50 % duty cycle.
+- Frequency range: ~30 Hz to 20 kHz.
+
+### Validated example — C major scale
+
+```c
+#include "buzzer.h"
+
+// Ascending scale at volume 20 (quiet)
+Buzzer_PlayTone(262, 20, 200);   // C
+Buzzer_PlayTone(294, 20, 200);   // D
+Buzzer_PlayTone(330, 20, 200);   // E
+Buzzer_PlayTone(349, 20, 200);   // F
+Buzzer_PlayTone(392, 20, 200);   // G
+Buzzer_PlayTone(440, 20, 200);   // A
+Buzzer_PlayTone(494, 20, 200);   // B
+Buzzer_PlayTone(523, 20, 300);   // C (octave)
+```
+
+> **Note:** if the board has an **active** buzzer (built-in oscillator) rather than passive,
+> frequency control has no effect — only volume (on/off) will work.
 
 ## Flashing
 
