@@ -153,9 +153,6 @@ Buzzer_PlayTone(494, 20, 200);   // Si
 Buzzer_PlayTone(523, 20, 300);   // Do (octave)
 ```
 
-> **Note :** si la carte possède un buzzer **actif** (oscillateur intégré) plutôt que passif,
-> le contrôle de fréquence n'a pas d'effet — seul le volume (on/off) fonctionnera.
-
 ## Flasher sur la carte
 
 Pas de ST-Link — le bootloader Artillery gère le flash via carte SD :
@@ -362,9 +359,6 @@ Buzzer_PlayTone(440, 20, 200);   // A
 Buzzer_PlayTone(494, 20, 200);   // B
 Buzzer_PlayTone(523, 20, 300);   // C (octave)
 ```
-
-> **Note:** if the board has an **active** buzzer (built-in oscillator) rather than passive,
-> frequency control has no effect — only volume (on/off) will work.
 
 ## Flashing
 
