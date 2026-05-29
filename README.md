@@ -46,6 +46,7 @@ carte, par exemple :
 - UART / Serial (DMA)
 - Chargement d'assets BMP depuis SD vers flash externe
 - **Buzzer PWM** — pilote TIM5_CH3 sur PA2 avec contrôle de fréquence et de volume
+- **LCD burst fill** — `LCD_FillColor(color, count)` : CS/RS positionnés une seule fois pour N pixels, 3 ops GPIO/pixel au lieu de 6 (~2× plus rapide sur les fills)
 
 ## Pré-requis
 
@@ -253,6 +254,7 @@ This BSP is designed as a foundation for standalone embedded projects on this bo
 - UART / Serial with DMA
 - BMP asset loader (SD → external flash)
 - **Buzzer PWM** — TIM5_CH3 driver on PA2 with frequency and volume control
+- **LCD burst fill** — `LCD_FillColor(color, count)`: CS/RS set once for N pixels, 3 GPIO ops/pixel instead of 6 (~2× faster fills)
 
 ## Prerequisites
 
