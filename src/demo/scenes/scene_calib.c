@@ -1,16 +1,19 @@
 /**
  * @file    scene_calib.c
- * @brief   Scene: XPT2046 touch calibration — 7-seg display + W25Q64 persistence
- * @version 1.1
+ * @brief   Scene: guided 4-corner touch calibration
+ * @version 2.0
  * @date    Created:       2026-05-29
  *          Last modified: 2026-05-29
  * @note    Developed with Claude Sonnet 4.6 (Anthropic)
  *
- *  No font atlas required: all values rendered with a built-in 7-segment
- *  renderer using GUI_FillRectColor primitives only.
+ *  Guided procedure — no text required:
+ *    1. A large corner target blinks (yellow = touch me)
+ *    2. User touches that corner
+ *    3. Corner turns green (confirmed), next corner blinks
+ *    4. After 4 corners: auto-save to W25Q64 + apply via Nav_SetCalibration
+ *    5. All corners green + 7-seg values shown in center -> ESC to return
  *
- *  On ESC: if at least one valid touch was recorded, calibration is saved
- *  to W25Q64 (SETTINGS_ADDR) and applied immediately via Nav_SetCalibration.
+ *  Sequence: TL -> TR -> BR -> BL (clockwise)
  */
 
 #include "scene_calib.h"
@@ -20,316 +23,276 @@
 #include "GUI.h"
 #include "LCD_Colors.h"
 #include "mks_tft28.h"
+#include "delay.h"
 #include <stdint.h>
 #include <stdbool.h>
+#include <string.h>
 
 // ---------------------------------------------------------------------------
-// Touch channels
+// ADC channels — 0xD0 = vertical axis, 0x90 = horizontal axis
 // ---------------------------------------------------------------------------
-#define CAL_X_CMD  0xD0
-#define CAL_Y_CMD  0x90
+#define CAL_VERT_CMD   0xD0
+#define CAL_HORIZ_CMD  0x90
 
 // ---------------------------------------------------------------------------
-// 7-segment renderer
-//  Digit cell: W=12 px wide, H=18 px tall, T=2 px thick segments
-//  Segment layout:
-//       aaa
-//      f   b
-//      f   b
-//       ggg
-//      e   c
-//      e   c
-//       ddd
+// Layout
 // ---------------------------------------------------------------------------
-#define SEG_W  12
-#define SEG_H  18
-#define SEG_T   2
-#define SEG_M   (SEG_H / 2)   // = 9 (midpoint)
-#define SEG_GAP  3             // pixels between digits in a number
+#define CORNER_SZ  64    // size of each corner touch target (px)
 
-// Segment bitmask: bit0=a(top) b(tr) c(br) d(bot) e(bl) f(tl) g(mid)
+// Corner top-left positions: TL, TR, BR, BL (clockwise)
+static const int16_t CX[4] = { 0,
+                                LCD_WIDTH  - CORNER_SZ,
+                                LCD_WIDTH  - CORNER_SZ,
+                                0 };
+static const int16_t CY[4] = { 0,
+                                0,
+                                LCD_HEIGHT - CORNER_SZ,
+                                LCD_HEIGHT - CORNER_SZ };
+
+// Progress dot row — 4 x 18 px squares, centered horizontally + vertically
+#define DOT_SZ   18
+#define DOT_GAP  10
+#define DOT_ROW_W  (4 * DOT_SZ + 3 * DOT_GAP)
+#define DOT_X0   ((LCD_WIDTH  - DOT_ROW_W) / 2)
+#define DOT_Y0   ((LCD_HEIGHT - DOT_SZ)    / 2)
+
+// 7-segment for summary (small version)
+#define SEG_W   10
+#define SEG_H   16
+#define SEG_T    2
+#define SEG_M   (SEG_H / 2)
+#define SEG_GAP  3
+#define NUM4_W  (4 * SEG_W + 3 * SEG_GAP)
+
+// ---------------------------------------------------------------------------
+// Colors
+// ---------------------------------------------------------------------------
+#define COL_BG       0x0000u   // black
+#define COL_ACTIVE   0xFFE0u   // yellow — blinks on current target
+#define COL_DIM      0x2945u   // dark blue-gray — active blink-off
+#define COL_DONE     0x07E0u   // green — captured corner
+#define COL_INACTIVE 0x18C3u   // very dark gray — future corners
+#define COL_CROSS    0xFFFFu   // white crosshair on corner
+#define COL_MIN      0x07E0u   // green 7-seg
+#define COL_MAX      0xF800u   // red 7-seg
+#define COL_LABEL    0x528Au   // gray label swatches
+
+// ---------------------------------------------------------------------------
+// 7-segment renderer (compact copy for this file)
+// ---------------------------------------------------------------------------
 static const uint8_t SEG7[10] = {
-    0x3F, // 0: a b c d e f
-    0x06, // 1: b c
-    0x5B, // 2: a b d e g
-    0x4F, // 3: a b c d g
-    0x66, // 4: b c f g
-    0x6D, // 5: a c d f g
-    0x7D, // 6: a c d e f g
-    0x07, // 7: a b c
-    0x7F, // 8: a b c d e f g
-    0x6F, // 9: a b c d f g
+    0x3F, 0x06, 0x5B, 0x4F, 0x66, 0x6D, 0x7D, 0x07, 0x7F, 0x6F
 };
 
-static void seg7_draw_digit(int16_t x, int16_t y, uint8_t digit, uint16_t color)
+static void seg_digit(int16_t x, int16_t y, uint8_t d, uint16_t col)
 {
-    if (digit > 9) return;
-    uint8_t m = SEG7[digit];
-    uint16_t bg = BLACK;
+    if (d > 9) return;
+    uint8_t m = SEG7[d];
+    uint16_t bg = COL_BG;
+    GUI_FillRectColor(x+SEG_T,     y,          x+SEG_W-SEG_T, y+SEG_T,          (m&0x01)?col:bg);
+    GUI_FillRectColor(x+SEG_W-SEG_T, y,        x+SEG_W,       y+SEG_M,          (m&0x02)?col:bg);
+    GUI_FillRectColor(x+SEG_W-SEG_T, y+SEG_M,  x+SEG_W,       y+SEG_H,          (m&0x04)?col:bg);
+    GUI_FillRectColor(x+SEG_T,     y+SEG_H-SEG_T, x+SEG_W-SEG_T, y+SEG_H,      (m&0x08)?col:bg);
+    GUI_FillRectColor(x,           y+SEG_M,    x+SEG_T,       y+SEG_H,          (m&0x10)?col:bg);
+    GUI_FillRectColor(x,           y,          x+SEG_T,       y+SEG_M,          (m&0x20)?col:bg);
+    GUI_FillRectColor(x+SEG_T,     y+SEG_M-1,  x+SEG_W-SEG_T, y+SEG_M+SEG_T-1,(m&0x40)?col:bg);
+}
 
-    // a — top horizontal
-    GUI_FillRectColor((uint16_t)(x+SEG_T), (uint16_t)y,
-                      (uint16_t)(x+SEG_W-SEG_T), (uint16_t)(y+SEG_T),
-                      (m & 0x01) ? color : bg);
-    // b — top-right vertical
-    GUI_FillRectColor((uint16_t)(x+SEG_W-SEG_T), (uint16_t)y,
-                      (uint16_t)(x+SEG_W), (uint16_t)(y+SEG_M),
-                      (m & 0x02) ? color : bg);
-    // c — bottom-right vertical
-    GUI_FillRectColor((uint16_t)(x+SEG_W-SEG_T), (uint16_t)(y+SEG_M),
-                      (uint16_t)(x+SEG_W), (uint16_t)(y+SEG_H),
-                      (m & 0x04) ? color : bg);
-    // d — bottom horizontal
-    GUI_FillRectColor((uint16_t)(x+SEG_T), (uint16_t)(y+SEG_H-SEG_T),
-                      (uint16_t)(x+SEG_W-SEG_T), (uint16_t)(y+SEG_H),
-                      (m & 0x08) ? color : bg);
-    // e — bottom-left vertical
-    GUI_FillRectColor((uint16_t)x, (uint16_t)(y+SEG_M),
-                      (uint16_t)(x+SEG_T), (uint16_t)(y+SEG_H),
-                      (m & 0x10) ? color : bg);
-    // f — top-left vertical
+static void seg_u16(int16_t x, int16_t y, uint16_t v, uint16_t col)
+{
+    int16_t s = SEG_W + SEG_GAP;
+    seg_digit(x,       y, (v/1000)%10, col);
+    seg_digit(x+s,     y, (v/100)%10,  col);
+    seg_digit(x+2*s,   y, (v/10)%10,   col);
+    seg_digit(x+3*s,   y,  v%10,        col);
+}
+
+// ---------------------------------------------------------------------------
+// Corner drawing helpers
+// ---------------------------------------------------------------------------
+static void draw_corner(int step, uint16_t fill_col)
+{
+    int16_t x = CX[step], y = CY[step];
+
+    // Large fill
     GUI_FillRectColor((uint16_t)x, (uint16_t)y,
-                      (uint16_t)(x+SEG_T), (uint16_t)(y+SEG_M),
-                      (m & 0x20) ? color : bg);
-    // g — middle horizontal
-    GUI_FillRectColor((uint16_t)(x+SEG_T), (uint16_t)(y+SEG_M-SEG_T/2),
-                      (uint16_t)(x+SEG_W-SEG_T), (uint16_t)(y+SEG_M+SEG_T/2),
-                      (m & 0x40) ? color : bg);
+                      (uint16_t)(x + CORNER_SZ), (uint16_t)(y + CORNER_SZ),
+                      fill_col);
+
+    // White crosshair at center of corner
+    int16_t cx = x + CORNER_SZ / 2;
+    int16_t cy = y + CORNER_SZ / 2;
+    GUI_SetColor(COL_CROSS);
+    GUI_DrawLine((uint16_t)(cx - 12), (uint16_t)cy, (uint16_t)(cx + 12), (uint16_t)cy);
+    GUI_DrawLine((uint16_t)cx, (uint16_t)(cy - 12), (uint16_t)cx, (uint16_t)(cy + 12));
+    GUI_FillRectColor((uint16_t)(cx - 3), (uint16_t)(cy - 3),
+                      (uint16_t)(cx + 3), (uint16_t)(cy + 3), COL_CROSS);
 }
 
-// Draw a 4-digit decimal number (0-9999) at (x,y) with the given color.
-// Digits are left-padded with leading zeros.
-static void seg7_draw_u16(int16_t x, int16_t y, uint16_t value, uint16_t color)
+static void draw_all_corners(uint8_t current_step, bool blink_on,
+                              const bool done[4])
 {
-    int16_t cx = x;
-    int16_t step = SEG_W + SEG_GAP;
-    seg7_draw_digit(cx,          y, (value / 1000) % 10, color); cx += step;
-    seg7_draw_digit(cx,          y, (value /  100) % 10, color); cx += step;
-    seg7_draw_digit(cx,          y, (value /   10) % 10, color); cx += step;
-    seg7_draw_digit(cx,          y,  value         % 10, color);
+    for (int i = 0; i < 4; i++) {
+        uint16_t col;
+        if (done[i]) {
+            col = COL_DONE;
+        } else if (i == (int)current_step) {
+            col = blink_on ? COL_ACTIVE : COL_DIM;
+        } else {
+            col = COL_INACTIVE;
+        }
+        draw_corner(i, col);
+    }
 }
 
-// Width of a 4-digit number in pixels
-#define NUM4_W  (4 * SEG_W + 3 * SEG_GAP)   // = 57 px
+static void draw_progress_dots(const bool done[4], uint8_t current_step)
+{
+    // Clear dot row background first
+    GUI_FillRectColor((uint16_t)(DOT_X0 - 4), (uint16_t)(DOT_Y0 - 4),
+                      (uint16_t)(DOT_X0 + DOT_ROW_W + 4), (uint16_t)(DOT_Y0 + DOT_SZ + 4),
+                      COL_BG);
 
-// ---------------------------------------------------------------------------
-// Layout constants (all Y positions from top of screen)
-// ---------------------------------------------------------------------------
-#define TITLE_H     24
-#define ROW_RAW_Y   (TITLE_H + 6)
-#define ROW_MIN_Y   (ROW_RAW_Y + SEG_H + 8)
-#define ROW_MAX_Y   (ROW_MIN_Y + SEG_H + 8)
-#define BAR_X_Y     (ROW_MAX_Y + SEG_H + 8)
-#define BAR_Y_Y     (BAR_X_Y + 12)
-#define CROSS_Y0    (BAR_Y_Y + 16)           // top of crosshair area
-#define FOOTER_Y    (LCD_HEIGHT - 14)
+    for (int i = 0; i < 4; i++) {
+        int16_t dx = DOT_X0 + i * (DOT_SZ + DOT_GAP);
+        uint16_t col = done[i] ? COL_DONE :
+                       (i == (int)current_step) ? COL_ACTIVE : COL_INACTIVE;
+        GUI_FillRectColor((uint16_t)dx, (uint16_t)DOT_Y0,
+                          (uint16_t)(dx + DOT_SZ), (uint16_t)(DOT_Y0 + DOT_SZ),
+                          col);
+    }
+}
 
-// Column positions: label swatch (8px), gap, X value, gap, Y value
-#define COL_LABEL   2
-#define COL_X_VAL   18
-#define COL_Y_VAL   (COL_X_VAL + NUM4_W + 10)
+static void draw_summary(uint16_t xmin, uint16_t xmax,
+                          uint16_t ymin, uint16_t ymax)
+{
+    // Center area between corners: X: CORNER_SZ..LCD_W-CORNER_SZ, Y: CORNER_SZ..LCD_H-CORNER_SZ
+    // 4 rows of 7-seg values (x_min, x_max, y_min, y_max)
+    int16_t area_w = LCD_WIDTH  - 2 * CORNER_SZ;
+    int16_t area_h = LCD_HEIGHT - 2 * CORNER_SZ;
+    int16_t rows_h = 4 * SEG_H + 3 * 6;  // 4 rows + gaps
+    int16_t start_x = CORNER_SZ + (area_w - NUM4_W - 14) / 2;
+    int16_t start_y = CORNER_SZ + (area_h - rows_h) / 2;
 
-// Colors
-#define COL_BG        0x0841u
-#define COL_TITLE_BG  0x2965u
-#define COL_RAW       0xFFFFu   // white — live raw values
-#define COL_MIN       0x07E0u   // green — minimum accumulated
-#define COL_MAX       0xF800u   // red   — maximum accumulated
-#define COL_BAR_X     0x07FFu   // cyan  — X ADC bar
-#define COL_BAR_Y     0xF81Fu   // magenta — Y ADC bar
-#define COL_BAR_BG    0x2104u
-#define COL_CROSS     0xFFE0u   // yellow crosshair
-#define COL_SAVED     0x07E0u   // green flash on save
+    // Clear center area
+    GUI_FillRectColor((uint16_t)CORNER_SZ, (uint16_t)CORNER_SZ,
+                      (uint16_t)(LCD_WIDTH  - CORNER_SZ),
+                      (uint16_t)(LCD_HEIGHT - CORNER_SZ), COL_BG);
+
+    // Label swatches (small 8x8 squares) + values
+    int16_t row = start_y;
+    int16_t step = SEG_H + 6;
+
+    GUI_FillRectColor((uint16_t)start_x, (uint16_t)(row+4),
+                      (uint16_t)(start_x+8), (uint16_t)(row+12), COL_MIN);
+    seg_u16(start_x + 12, row, xmin, COL_MIN);  row += step;
+
+    GUI_FillRectColor((uint16_t)start_x, (uint16_t)(row+4),
+                      (uint16_t)(start_x+8), (uint16_t)(row+12), COL_MAX);
+    seg_u16(start_x + 12, row, xmax, COL_MAX);  row += step;
+
+    GUI_FillRectColor((uint16_t)start_x, (uint16_t)(row+4),
+                      (uint16_t)(start_x+8), (uint16_t)(row+12), COL_MIN);
+    seg_u16(start_x + 12, row, ymin, COL_MIN);  row += step;
+
+    GUI_FillRectColor((uint16_t)start_x, (uint16_t)(row+4),
+                      (uint16_t)(start_x+8), (uint16_t)(row+12), COL_MAX);
+    seg_u16(start_x + 12, row, ymax, COL_MAX);
+}
 
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
-static uint16_t raw_x = 0, raw_y = 0;
-static uint16_t min_x = 0xFFFFu, max_x = 0u;
-static uint16_t min_y = 0xFFFFu, max_y = 0u;
-static int16_t  cross_x = -1, cross_y = -1;
-static bool     prev_pen = false;
-static bool     has_data = false;   // true once at least one valid touch read
+static uint8_t  cal_step;           // 0-3: current corner, 4: done
+static bool     corner_done[4];
+static uint16_t glob_min_x, glob_max_x, glob_min_y, glob_max_y;
+static bool     blink_on;
+static uint32_t last_blink_ms;
+static bool     prev_pen;
 
 // ---------------------------------------------------------------------------
-// Internal draw helpers
-// ---------------------------------------------------------------------------
-
-static void draw_swatch(int16_t x, int16_t y, uint16_t color)
-{
-    // 8×8 colored square used as row identifier (replaces text label)
-    GUI_FillRectColor((uint16_t)x, (uint16_t)y,
-                      (uint16_t)(x + 8), (uint16_t)(y + 8), color);
-}
-
-static void draw_bar(int16_t bar_y, uint16_t raw, uint16_t bar_color)
-{
-    uint16_t w = (raw > 0)
-                 ? (uint16_t)((uint32_t)raw * (LCD_WIDTH - 4u) / 4095u)
-                 : 0u;
-    GUI_FillRectColor(2u, (uint16_t)bar_y,
-                      (uint16_t)(2u + w), (uint16_t)(bar_y + 10), bar_color);
-    GUI_FillRectColor((uint16_t)(2u + w), (uint16_t)bar_y,
-                      (uint16_t)(LCD_WIDTH - 2u), (uint16_t)(bar_y + 10), COL_BAR_BG);
-}
-
-static void draw_crosshair(int16_t x, int16_t y, uint16_t color)
-{
-    if (y < CROSS_Y0 || y > FOOTER_Y - 2) return;
-    int16_t r = 10;
-    int16_t x0 = (x - r < 0)           ? 0          : (x - r);
-    int16_t x1 = (x + r >= LCD_WIDTH)  ? LCD_WIDTH-1 : (x + r);
-    int16_t y0 = (y - r < CROSS_Y0)    ? CROSS_Y0   : (y - r);
-    int16_t y1 = (y + r > FOOTER_Y-2)  ? FOOTER_Y-2  : (y + r);
-    GUI_SetColor(color);
-    GUI_DrawLine((uint16_t)x0, (uint16_t)y,  (uint16_t)x1, (uint16_t)y);
-    GUI_DrawLine((uint16_t)x,  (uint16_t)y0, (uint16_t)x,  (uint16_t)y1);
-}
-
-static void redraw_values(void)
-{
-    // Row RAW — white
-    draw_swatch(COL_LABEL, ROW_RAW_Y + 5, COL_RAW);
-    seg7_draw_u16(COL_X_VAL, ROW_RAW_Y, raw_x, COL_RAW);
-    seg7_draw_u16(COL_Y_VAL, ROW_RAW_Y, raw_y, COL_RAW);
-
-    // Row MIN — green
-    uint16_t show_min_x = (min_x == 0xFFFFu) ? 0u : min_x;
-    uint16_t show_min_y = (min_y == 0xFFFFu) ? 0u : min_y;
-    draw_swatch(COL_LABEL, ROW_MIN_Y + 5, COL_MIN);
-    seg7_draw_u16(COL_X_VAL, ROW_MIN_Y, show_min_x, COL_MIN);
-    seg7_draw_u16(COL_Y_VAL, ROW_MIN_Y, show_min_y, COL_MIN);
-
-    // Row MAX — red
-    draw_swatch(COL_LABEL, ROW_MAX_Y + 5, COL_MAX);
-    seg7_draw_u16(COL_X_VAL, ROW_MAX_Y, max_x, COL_MAX);
-    seg7_draw_u16(COL_Y_VAL, ROW_MAX_Y, max_y, COL_MAX);
-}
-
-static void draw_static_frame(void)
-{
-    GUI_Clear((uint16_t)COL_BG);
-
-    // Title bar
-    GUI_FillRectColor(0, 0, LCD_WIDTH, TITLE_H, COL_TITLE_BG);
-
-    // "CALIB" spelled in tiny blocks in the title bar (no font needed)
-    // Just draw a row of 5 colored blocks as a visual placeholder
-    for (int i = 0; i < 5; i++)
-        GUI_FillRectColor((uint16_t)(10 + i * 14), 6u, (uint16_t)(10 + i * 14 + 10), 18u,
-                          (uint16_t)(0x07FF - i * 0x0400));  // cyan gradient
-
-    // Separator lines
-    GUI_FillRectColor(0, (uint16_t)TITLE_H, LCD_WIDTH, (uint16_t)(TITLE_H + 1), 0x4228u);
-    GUI_FillRectColor(0, (uint16_t)(BAR_X_Y - 2), LCD_WIDTH, (uint16_t)(BAR_X_Y - 1), 0x4228u);
-    GUI_FillRectColor(0, (uint16_t)(CROSS_Y0 - 2), LCD_WIDTH, (uint16_t)(CROSS_Y0 - 1), 0x4228u);
-    GUI_FillRectColor(0, (uint16_t)FOOTER_Y, LCD_WIDTH, LCD_HEIGHT, 0x2104u);
-
-    // Column header swatches (X = cyan, Y = magenta)
-    GUI_FillRectColor((uint16_t)COL_X_VAL, (uint16_t)(TITLE_H + 2),
-                      (uint16_t)(COL_X_VAL + NUM4_W), (uint16_t)(TITLE_H + 5), COL_BAR_X);
-    GUI_FillRectColor((uint16_t)COL_Y_VAL, (uint16_t)(TITLE_H + 2),
-                      (uint16_t)(COL_Y_VAL + NUM4_W), (uint16_t)(TITLE_H + 5), COL_BAR_Y);
-
-    // Bar labels (small colored squares left of each bar)
-    GUI_FillRectColor(0, (uint16_t)BAR_X_Y, 2u, (uint16_t)(BAR_X_Y + 10), COL_BAR_X);
-    GUI_FillRectColor(0, (uint16_t)BAR_Y_Y, 2u, (uint16_t)(BAR_Y_Y + 10), COL_BAR_Y);
-
-    // Crosshair area hint: 4 small corner marks
-    int16_t m = 8;
-    GUI_SetColor(0x4228u);
-    GUI_DrawLine((uint16_t)0,              (uint16_t)CROSS_Y0,      (uint16_t)m,             (uint16_t)CROSS_Y0);
-    GUI_DrawLine((uint16_t)0,              (uint16_t)CROSS_Y0,      (uint16_t)0,              (uint16_t)(CROSS_Y0 + m));
-    GUI_DrawLine((uint16_t)(LCD_WIDTH - m),(uint16_t)CROSS_Y0,      (uint16_t)(LCD_WIDTH - 1),(uint16_t)CROSS_Y0);
-    GUI_DrawLine((uint16_t)(LCD_WIDTH - 1),(uint16_t)CROSS_Y0,      (uint16_t)(LCD_WIDTH - 1),(uint16_t)(CROSS_Y0 + m));
-    GUI_DrawLine((uint16_t)0,              (uint16_t)(FOOTER_Y - m),(uint16_t)0,              (uint16_t)(FOOTER_Y - 1));
-    GUI_DrawLine((uint16_t)0,              (uint16_t)(FOOTER_Y - 1),(uint16_t)m,              (uint16_t)(FOOTER_Y - 1));
-    GUI_DrawLine((uint16_t)(LCD_WIDTH - 1),(uint16_t)(FOOTER_Y - m),(uint16_t)(LCD_WIDTH - 1),(uint16_t)(FOOTER_Y - 1));
-    GUI_DrawLine((uint16_t)(LCD_WIDTH - m),(uint16_t)(FOOTER_Y - 1),(uint16_t)(LCD_WIDTH - 1),(uint16_t)(FOOTER_Y - 1));
-
-    // Footer: 3 small colored indicators (ESC hint)
-    GUI_FillRectColor(4u, (uint16_t)(FOOTER_Y + 3), 12u, (uint16_t)(LCD_HEIGHT - 3), 0xF800u);  // red ESC
-    GUI_FillRectColor(16u,(uint16_t)(FOOTER_Y + 3), 24u, (uint16_t)(LCD_HEIGHT - 3), 0x4228u);
-    GUI_FillRectColor(28u,(uint16_t)(FOOTER_Y + 3), 60u, (uint16_t)(LCD_HEIGHT - 3), 0x2104u);
-}
-
-// ---------------------------------------------------------------------------
-// Scene API
+// Public API
 // ---------------------------------------------------------------------------
 
 void SceneCalib_OnEnter(void)
 {
-    raw_x = raw_y = 0;
-    min_x = 0xFFFFu; max_x = 0u;
-    min_y = 0xFFFFu; max_y = 0u;
-    cross_x = cross_y = -1;
-    prev_pen = false;
-    has_data = false;
+    cal_step   = 0;
+    blink_on   = true;
+    prev_pen   = false;
+    last_blink_ms = 0;
+    glob_min_x = 0xFFFFu; glob_max_x = 0u;
+    glob_min_y = 0xFFFFu; glob_max_y = 0u;
+    memset(corner_done, 0, sizeof(corner_done));
 
-    draw_static_frame();
-    redraw_values();
+    GUI_Clear(COL_BG);
+    draw_all_corners(0, true, corner_done);
+    draw_progress_dots(corner_done, 0);
 }
 
 void SceneCalib_OnUpdate(uint32_t now_ms)
 {
-    (void)now_ms;
+    if (cal_step >= 4) return;   // all done, wait for ESC
 
-    bool pen = (XPT2046_Read_Pen() == 0);   // TPEN active-low
+    // Blink current corner
+    bool blink = ((now_ms / 400u) % 2u) == 0u;
+    if (blink != blink_on) {
+        blink_on = blink;
+        uint16_t col = blink_on ? COL_ACTIVE : COL_DIM;
+        draw_corner(cal_step, col);
+    }
 
-    if (pen) {
-        // 0xD0 = physical vertical axis → screen Y
-        // 0x90 = physical horizontal axis → screen X
-        uint16_t ch_vert = XPT2046_Repeated_Compare_AD(CAL_X_CMD);   // 0xD0
-        uint16_t ch_horiz = XPT2046_Repeated_Compare_AD(CAL_Y_CMD);  // 0x90
+    // Touch detection (rising edge only)
+    bool pen = (XPT2046_Read_Pen() == 0);
 
-        if (ch_vert != 0 && ch_horiz != 0) {
-            raw_x = ch_horiz;   // horizontal → displayed as X
-            raw_y = ch_vert;    // vertical   → displayed as Y
-            has_data = true;
+    if (pen && !prev_pen) {
+        uint16_t ch_v = XPT2046_Repeated_Compare_AD(CAL_VERT_CMD);    // 0xD0
+        uint16_t ch_h = XPT2046_Repeated_Compare_AD(CAL_HORIZ_CMD);   // 0x90
 
-            if (ch_horiz < min_x) min_x = ch_horiz;
-            if (ch_horiz > max_x) max_x = ch_horiz;
-            if (ch_vert  < min_y) min_y = ch_vert;
-            if (ch_vert  > max_y) max_y = ch_vert;
+        if (ch_v != 0 && ch_h != 0) {
+            // Update global min/max
+            if (ch_h < glob_min_x) glob_min_x = ch_h;
+            if (ch_h > glob_max_x) glob_max_x = ch_h;
+            if (ch_v < glob_min_y) glob_min_y = ch_v;
+            if (ch_v > glob_max_y) glob_max_y = ch_v;
 
-            draw_bar(BAR_X_Y, ch_horiz, COL_BAR_X);
-            draw_bar(BAR_Y_Y, ch_vert,  COL_BAR_Y);
-            redraw_values();
+            // Confirm this corner
+            corner_done[cal_step] = true;
+            draw_corner(cal_step, COL_DONE);
 
-            // Map into crosshair area: horizontal→screen X, vertical→screen Y
-            int32_t cross_h = FOOTER_Y - CROSS_Y0;
-            int32_t nx_i = (int32_t)(ch_horiz - 200) * LCD_WIDTH / (3900 - 200);
-            int32_t ny_i = CROSS_Y0 + (int32_t)(3900 - ch_vert) * cross_h / (3900 - 200);
-            int16_t nx = (nx_i < 0) ? 0 : (nx_i >= LCD_WIDTH  ? LCD_WIDTH  - 1 : (int16_t)nx_i);
-            int16_t ny = (ny_i < CROSS_Y0) ? (int16_t)CROSS_Y0 : (ny_i > FOOTER_Y - 2 ? (int16_t)(FOOTER_Y - 2) : (int16_t)ny_i);
+            cal_step++;
+            draw_progress_dots(corner_done, cal_step);
 
-            if (cross_x >= 0)
-                draw_crosshair(cross_x, cross_y, (uint16_t)COL_BG);
-            draw_crosshair(nx, ny, COL_CROSS);
-            cross_x = nx;
-            cross_y = ny;
+            if (cal_step >= 4) {
+                // Brief confirmation flash
+                Delay_ms(150);
+                GUI_FillRectColor(0, 0, LCD_WIDTH, LCD_HEIGHT, COL_DONE);
+                Delay_ms(150);
+
+                // Save calibration
+                if (glob_min_x < glob_max_x && glob_min_y < glob_max_y) {
+                    Settings_t s;
+                    s.touch_x_min = glob_min_x;
+                    s.touch_x_max = glob_max_x;
+                    s.touch_y_min = glob_min_y;
+                    s.touch_y_max = glob_max_y;
+                    Settings_Save(&s);
+                    Nav_SetCalibration(glob_min_x, glob_max_x,
+                                       glob_min_y, glob_max_y);
+                }
+
+                // Redraw all corners green + summary
+                GUI_Clear(COL_BG);
+                for (int i = 0; i < 4; i++)
+                    draw_corner(i, COL_DONE);
+                draw_progress_dots(corner_done, 4);
+                draw_summary(glob_min_x, glob_max_x, glob_min_y, glob_max_y);
+            }
         }
     }
 
-    if (!pen) prev_pen = false;
-    else      prev_pen = true;
+    prev_pen = pen;
 }
 
 void SceneCalib_OnExit(void)
 {
-    if (!has_data || min_x >= max_x || min_y >= max_y)
-        return;   // nothing valid to save
-
-    // Brief green flash to signal save
-    GUI_FillRectColor(0, 0, LCD_WIDTH, LCD_HEIGHT, (uint16_t)COL_SAVED);
-
-    Settings_t s;
-    s.touch_x_min = min_x;
-    s.touch_x_max = max_x;
-    s.touch_y_min = min_y;
-    s.touch_y_max = max_y;
-    Settings_Save(&s);
-
-    // Apply immediately — no reboot needed
-    Nav_SetCalibration(min_x, max_x, min_y, max_y);
+    // Calibration already saved in OnUpdate when cal_step reached 4
 }
