@@ -1,143 +1,260 @@
 /**
  * @file    scene_calib.c
- * @brief   Scene: XPT2046 touch screen calibration helper
- * @version 1.0
+ * @brief   Scene: XPT2046 touch calibration — 7-seg display + W25Q64 persistence
+ * @version 1.1
  * @date    Created:       2026-05-29
  *          Last modified: 2026-05-29
  * @note    Developed with Claude Sonnet 4.6 (Anthropic)
+ *
+ *  No font atlas required: all values rendered with a built-in 7-segment
+ *  renderer using GUI_FillRectColor primitives only.
+ *
+ *  On ESC: if at least one valid touch was recorded, calibration is saved
+ *  to W25Q64 (SETTINGS_ADDR) and applied immediately via Nav_SetCalibration.
  */
 
 #include "scene_calib.h"
+#include "settings.h"
+#include "ui_nav.h"
 #include "xpt2046.h"
 #include "GUI.h"
 #include "LCD_Colors.h"
-#include "font_render.h"
 #include "mks_tft28.h"
 #include <stdint.h>
 #include <stdbool.h>
 
 // ---------------------------------------------------------------------------
-// Touch ADC channel commands (XPT2046)
+// Touch channels
 // ---------------------------------------------------------------------------
 #define CAL_X_CMD  0xD0
 #define CAL_Y_CMD  0x90
 
-// Current calibration constants (must match ui_nav.c — used for crosshair)
-#define CAL_X_MIN  200u
-#define CAL_X_MAX  3900u
-#define CAL_Y_MIN  200u
-#define CAL_Y_MAX  3900u
+// ---------------------------------------------------------------------------
+// 7-segment renderer
+//  Digit cell: W=12 px wide, H=18 px tall, T=2 px thick segments
+//  Segment layout:
+//       aaa
+//      f   b
+//      f   b
+//       ggg
+//      e   c
+//      e   c
+//       ddd
+// ---------------------------------------------------------------------------
+#define SEG_W  12
+#define SEG_H  18
+#define SEG_T   2
+#define SEG_M   (SEG_H / 2)   // = 9 (midpoint)
+#define SEG_GAP  3             // pixels between digits in a number
 
-// Layout
-#define TITLE_H    28
-#define HINT_Y     (TITLE_H + 4)
-#define DATA_Y     (HINT_Y + 20)
-#define BAR_X_Y    (DATA_Y + 70)
-#define BAR_Y_Y    (BAR_X_Y + 22)
-#define CROSS_AREA_Y (BAR_Y_Y + 28)
-#define FOOTER_Y   (LCD_HEIGHT - 16)
+// Segment bitmask: bit0=a(top) b(tr) c(br) d(bot) e(bl) f(tl) g(mid)
+static const uint8_t SEG7[10] = {
+    0x3F, // 0: a b c d e f
+    0x06, // 1: b c
+    0x5B, // 2: a b d e g
+    0x4F, // 3: a b c d g
+    0x66, // 4: b c f g
+    0x6D, // 5: a c d f g
+    0x7D, // 6: a c d e f g
+    0x07, // 7: a b c
+    0x7F, // 8: a b c d e f g
+    0x6F, // 9: a b c d f g
+};
+
+static void seg7_draw_digit(int16_t x, int16_t y, uint8_t digit, uint16_t color)
+{
+    if (digit > 9) return;
+    uint8_t m = SEG7[digit];
+    uint16_t bg = BLACK;
+
+    // a — top horizontal
+    GUI_FillRectColor((uint16_t)(x+SEG_T), (uint16_t)y,
+                      (uint16_t)(x+SEG_W-SEG_T), (uint16_t)(y+SEG_T),
+                      (m & 0x01) ? color : bg);
+    // b — top-right vertical
+    GUI_FillRectColor((uint16_t)(x+SEG_W-SEG_T), (uint16_t)y,
+                      (uint16_t)(x+SEG_W), (uint16_t)(y+SEG_M),
+                      (m & 0x02) ? color : bg);
+    // c — bottom-right vertical
+    GUI_FillRectColor((uint16_t)(x+SEG_W-SEG_T), (uint16_t)(y+SEG_M),
+                      (uint16_t)(x+SEG_W), (uint16_t)(y+SEG_H),
+                      (m & 0x04) ? color : bg);
+    // d — bottom horizontal
+    GUI_FillRectColor((uint16_t)(x+SEG_T), (uint16_t)(y+SEG_H-SEG_T),
+                      (uint16_t)(x+SEG_W-SEG_T), (uint16_t)(y+SEG_H),
+                      (m & 0x08) ? color : bg);
+    // e — bottom-left vertical
+    GUI_FillRectColor((uint16_t)x, (uint16_t)(y+SEG_M),
+                      (uint16_t)(x+SEG_T), (uint16_t)(y+SEG_H),
+                      (m & 0x10) ? color : bg);
+    // f — top-left vertical
+    GUI_FillRectColor((uint16_t)x, (uint16_t)y,
+                      (uint16_t)(x+SEG_T), (uint16_t)(y+SEG_M),
+                      (m & 0x20) ? color : bg);
+    // g — middle horizontal
+    GUI_FillRectColor((uint16_t)(x+SEG_T), (uint16_t)(y+SEG_M-SEG_T/2),
+                      (uint16_t)(x+SEG_W-SEG_T), (uint16_t)(y+SEG_M+SEG_T/2),
+                      (m & 0x40) ? color : bg);
+}
+
+// Draw a 4-digit decimal number (0-9999) at (x,y) with the given color.
+// Digits are left-padded with leading zeros.
+static void seg7_draw_u16(int16_t x, int16_t y, uint16_t value, uint16_t color)
+{
+    int16_t cx = x;
+    int16_t step = SEG_W + SEG_GAP;
+    seg7_draw_digit(cx,          y, (value / 1000) % 10, color); cx += step;
+    seg7_draw_digit(cx,          y, (value /  100) % 10, color); cx += step;
+    seg7_draw_digit(cx,          y, (value /   10) % 10, color); cx += step;
+    seg7_draw_digit(cx,          y,  value         % 10, color);
+}
+
+// Width of a 4-digit number in pixels
+#define NUM4_W  (4 * SEG_W + 3 * SEG_GAP)   // = 57 px
+
+// ---------------------------------------------------------------------------
+// Layout constants (all Y positions from top of screen)
+// ---------------------------------------------------------------------------
+#define TITLE_H     24
+#define ROW_RAW_Y   (TITLE_H + 6)
+#define ROW_MIN_Y   (ROW_RAW_Y + SEG_H + 8)
+#define ROW_MAX_Y   (ROW_MIN_Y + SEG_H + 8)
+#define BAR_X_Y     (ROW_MAX_Y + SEG_H + 8)
+#define BAR_Y_Y     (BAR_X_Y + 12)
+#define CROSS_Y0    (BAR_Y_Y + 16)           // top of crosshair area
+#define FOOTER_Y    (LCD_HEIGHT - 14)
+
+// Column positions: label swatch (8px), gap, X value, gap, Y value
+#define COL_LABEL   2
+#define COL_X_VAL   18
+#define COL_Y_VAL   (COL_X_VAL + NUM4_W + 10)
 
 // Colors
-#define COL_TITLE_BG  0x2965u
 #define COL_BG        0x0841u
-#define COL_RAW       0xFFFFu   // white
-#define COL_MIN       0x07E0u   // green
-#define COL_MAX       0xF800u   // red
-#define COL_HINT      0xFFE0u   // yellow
-#define COL_FOOTER    0x528Au   // gray
+#define COL_TITLE_BG  0x2965u
+#define COL_RAW       0xFFFFu   // white — live raw values
+#define COL_MIN       0x07E0u   // green — minimum accumulated
+#define COL_MAX       0xF800u   // red   — maximum accumulated
+#define COL_BAR_X     0x07FFu   // cyan  — X ADC bar
+#define COL_BAR_Y     0xF81Fu   // magenta — Y ADC bar
 #define COL_BAR_BG    0x2104u
-#define COL_BAR_X     0x07FFu   // cyan bar for X
-#define COL_BAR_Y     0xF81Fu   // magenta bar for Y
 #define COL_CROSS     0xFFE0u   // yellow crosshair
-#define COL_CROSS_OLD 0x2104u   // erase color (matches bg)
+#define COL_SAVED     0x07E0u   // green flash on save
 
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
-static uint16_t raw_x   = 0;
-static uint16_t raw_y   = 0;
-static uint16_t min_x   = 0xFFFFu;
-static uint16_t max_x   = 0u;
-static uint16_t min_y   = 0xFFFFu;
-static uint16_t max_y   = 0u;
-
-static int16_t  cross_x = -1;   // last crosshair position (-1 = none)
-static int16_t  cross_y = -1;
-
+static uint16_t raw_x = 0, raw_y = 0;
+static uint16_t min_x = 0xFFFFu, max_x = 0u;
+static uint16_t min_y = 0xFFFFu, max_y = 0u;
+static int16_t  cross_x = -1, cross_y = -1;
 static bool     prev_pen = false;
+static bool     has_data = false;   // true once at least one valid touch read
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Internal draw helpers
 // ---------------------------------------------------------------------------
 
-static int16_t map_to_screen_x(uint16_t raw)
+static void draw_swatch(int16_t x, int16_t y, uint16_t color)
 {
-    if (raw <= CAL_X_MIN) return 0;
-    if (raw >= CAL_X_MAX) return LCD_WIDTH - 1;
-    return (int16_t)((uint32_t)(raw - CAL_X_MIN) * LCD_WIDTH
-                     / (CAL_X_MAX - CAL_X_MIN));
-}
-
-static int16_t map_to_screen_y(uint16_t raw)
-{
-    if (raw <= CAL_Y_MIN) return 0;
-    if (raw >= CAL_Y_MAX) return LCD_HEIGHT - 1;
-    return (int16_t)((uint32_t)(raw - CAL_Y_MIN) * LCD_HEIGHT
-                     / (CAL_Y_MAX - CAL_Y_MIN));
-}
-
-static void draw_crosshair(int16_t x, int16_t y, uint16_t color)
-{
-    // Only draw inside the crosshair area
-    if (y < CROSS_AREA_Y || y > FOOTER_Y - 4) return;
-    int16_t r = 8;
-    GUI_SetColor(color);
-    GUI_DrawLine((uint16_t)(x - r), (uint16_t)y, (uint16_t)(x + r), (uint16_t)y);
-    GUI_DrawLine((uint16_t)x, (uint16_t)(y - r), (uint16_t)x, (uint16_t)(y + r));
+    // 8×8 colored square used as row identifier (replaces text label)
+    GUI_FillRectColor((uint16_t)x, (uint16_t)y,
+                      (uint16_t)(x + 8), (uint16_t)(y + 8), color);
 }
 
 static void draw_bar(int16_t bar_y, uint16_t raw, uint16_t bar_color)
 {
-    uint16_t bar_w = (raw > 0) ? (uint16_t)((uint32_t)raw * LCD_WIDTH / 4096u) : 0u;
-    GUI_FillRectColor(0,     (uint16_t)bar_y, (uint16_t)bar_w,  (uint16_t)(bar_y + 16), bar_color);
-    GUI_FillRectColor((uint16_t)bar_w, (uint16_t)bar_y, LCD_WIDTH, (uint16_t)(bar_y + 16), COL_BAR_BG);
+    uint16_t w = (raw > 0)
+                 ? (uint16_t)((uint32_t)raw * (LCD_WIDTH - 4u) / 4095u)
+                 : 0u;
+    GUI_FillRectColor(2u, (uint16_t)bar_y,
+                      (uint16_t)(2u + w), (uint16_t)(bar_y + 10), bar_color);
+    GUI_FillRectColor((uint16_t)(2u + w), (uint16_t)bar_y,
+                      (uint16_t)(LCD_WIDTH - 2u), (uint16_t)(bar_y + 10), COL_BAR_BG);
 }
 
-static void redraw_data(void)
+static void draw_crosshair(int16_t x, int16_t y, uint16_t color)
 {
-    // Clear data zone
-    GUI_FillRectColor(0, (uint16_t)DATA_Y, LCD_WIDTH, (uint16_t)(BAR_X_Y - 2), COL_BG);
+    if (y < CROSS_Y0 || y > FOOTER_Y - 2) return;
+    int16_t r = 10;
+    int16_t x0 = (x - r < 0)           ? 0          : (x - r);
+    int16_t x1 = (x + r >= LCD_WIDTH)  ? LCD_WIDTH-1 : (x + r);
+    int16_t y0 = (y - r < CROSS_Y0)    ? CROSS_Y0   : (y - r);
+    int16_t y1 = (y + r > FOOTER_Y-2)  ? FOOTER_Y-2  : (y + r);
+    GUI_SetColor(color);
+    GUI_DrawLine((uint16_t)x0, (uint16_t)y,  (uint16_t)x1, (uint16_t)y);
+    GUI_DrawLine((uint16_t)x,  (uint16_t)y0, (uint16_t)x,  (uint16_t)y1);
+}
 
-    setFontSize(FONT_SIZE_NORMAL);
-    GUI_SetTextMode(GUI_TEXTMODE_TRANS);
+static void redraw_values(void)
+{
+    // Row RAW — white
+    draw_swatch(COL_LABEL, ROW_RAW_Y + 5, COL_RAW);
+    seg7_draw_u16(COL_X_VAL, ROW_RAW_Y, raw_x, COL_RAW);
+    seg7_draw_u16(COL_Y_VAL, ROW_RAW_Y, raw_y, COL_RAW);
 
-    // Row: RAW  X: ####   Y: ####
-    GUI_SetColor(COL_RAW);
-    _GUI_DispStringInRect(2,   DATA_Y,      50,  DATA_Y + 16, (const uint8_t *)"RAW");
-    _GUI_DispStringInRect(54,  DATA_Y,      90,  DATA_Y + 16, (const uint8_t *)"X:");
-    GUI_DispDec(94, DATA_Y, (int32_t)raw_x, 4, 0);
-    _GUI_DispStringInRect(170, DATA_Y,      206, DATA_Y + 16, (const uint8_t *)"Y:");
-    GUI_DispDec(210, DATA_Y, (int32_t)raw_y, 4, 0);
+    // Row MIN — green
+    uint16_t show_min_x = (min_x == 0xFFFFu) ? 0u : min_x;
+    uint16_t show_min_y = (min_y == 0xFFFFu) ? 0u : min_y;
+    draw_swatch(COL_LABEL, ROW_MIN_Y + 5, COL_MIN);
+    seg7_draw_u16(COL_X_VAL, ROW_MIN_Y, show_min_x, COL_MIN);
+    seg7_draw_u16(COL_Y_VAL, ROW_MIN_Y, show_min_y, COL_MIN);
 
-    // Row: MIN  X: ####   Y: ####
-    GUI_SetColor(COL_MIN);
-    _GUI_DispStringInRect(2,   DATA_Y + 20, 50,  DATA_Y + 36, (const uint8_t *)"MIN");
-    _GUI_DispStringInRect(54,  DATA_Y + 20, 90,  DATA_Y + 36, (const uint8_t *)"X:");
-    GUI_DispDec(94, DATA_Y + 20, (int32_t)(min_x == 0xFFFFu ? 0u : min_x), 4, 0);
-    _GUI_DispStringInRect(170, DATA_Y + 20, 206, DATA_Y + 36, (const uint8_t *)"Y:");
-    GUI_DispDec(210, DATA_Y + 20, (int32_t)(min_y == 0xFFFFu ? 0u : min_y), 4, 0);
+    // Row MAX — red
+    draw_swatch(COL_LABEL, ROW_MAX_Y + 5, COL_MAX);
+    seg7_draw_u16(COL_X_VAL, ROW_MAX_Y, max_x, COL_MAX);
+    seg7_draw_u16(COL_Y_VAL, ROW_MAX_Y, max_y, COL_MAX);
+}
 
-    // Row: MAX  X: ####   Y: ####
-    GUI_SetColor(COL_MAX);
-    _GUI_DispStringInRect(2,   DATA_Y + 40, 50,  DATA_Y + 56, (const uint8_t *)"MAX");
-    _GUI_DispStringInRect(54,  DATA_Y + 40, 90,  DATA_Y + 56, (const uint8_t *)"X:");
-    GUI_DispDec(94, DATA_Y + 40, (int32_t)max_x, 4, 0);
-    _GUI_DispStringInRect(170, DATA_Y + 40, 206, DATA_Y + 56, (const uint8_t *)"Y:");
-    GUI_DispDec(210, DATA_Y + 40, (int32_t)max_y, 4, 0);
+static void draw_static_frame(void)
+{
+    GUI_Clear((uint16_t)COL_BG);
+
+    // Title bar
+    GUI_FillRectColor(0, 0, LCD_WIDTH, TITLE_H, COL_TITLE_BG);
+
+    // "CALIB" spelled in tiny blocks in the title bar (no font needed)
+    // Just draw a row of 5 colored blocks as a visual placeholder
+    for (int i = 0; i < 5; i++)
+        GUI_FillRectColor((uint16_t)(10 + i * 14), 6u, (uint16_t)(10 + i * 14 + 10), 18u,
+                          (uint16_t)(0x07FF - i * 0x0400));  // cyan gradient
+
+    // Separator lines
+    GUI_FillRectColor(0, (uint16_t)TITLE_H, LCD_WIDTH, (uint16_t)(TITLE_H + 1), 0x4228u);
+    GUI_FillRectColor(0, (uint16_t)(BAR_X_Y - 2), LCD_WIDTH, (uint16_t)(BAR_X_Y - 1), 0x4228u);
+    GUI_FillRectColor(0, (uint16_t)(CROSS_Y0 - 2), LCD_WIDTH, (uint16_t)(CROSS_Y0 - 1), 0x4228u);
+    GUI_FillRectColor(0, (uint16_t)FOOTER_Y, LCD_WIDTH, LCD_HEIGHT, 0x2104u);
+
+    // Column header swatches (X = cyan, Y = magenta)
+    GUI_FillRectColor((uint16_t)COL_X_VAL, (uint16_t)(TITLE_H + 2),
+                      (uint16_t)(COL_X_VAL + NUM4_W), (uint16_t)(TITLE_H + 5), COL_BAR_X);
+    GUI_FillRectColor((uint16_t)COL_Y_VAL, (uint16_t)(TITLE_H + 2),
+                      (uint16_t)(COL_Y_VAL + NUM4_W), (uint16_t)(TITLE_H + 5), COL_BAR_Y);
+
+    // Bar labels (small colored squares left of each bar)
+    GUI_FillRectColor(0, (uint16_t)BAR_X_Y, 2u, (uint16_t)(BAR_X_Y + 10), COL_BAR_X);
+    GUI_FillRectColor(0, (uint16_t)BAR_Y_Y, 2u, (uint16_t)(BAR_Y_Y + 10), COL_BAR_Y);
+
+    // Crosshair area hint: 4 small corner marks
+    int16_t m = 8;
+    GUI_SetColor(0x4228u);
+    GUI_DrawLine((uint16_t)0,              (uint16_t)CROSS_Y0,      (uint16_t)m,             (uint16_t)CROSS_Y0);
+    GUI_DrawLine((uint16_t)0,              (uint16_t)CROSS_Y0,      (uint16_t)0,              (uint16_t)(CROSS_Y0 + m));
+    GUI_DrawLine((uint16_t)(LCD_WIDTH - m),(uint16_t)CROSS_Y0,      (uint16_t)(LCD_WIDTH - 1),(uint16_t)CROSS_Y0);
+    GUI_DrawLine((uint16_t)(LCD_WIDTH - 1),(uint16_t)CROSS_Y0,      (uint16_t)(LCD_WIDTH - 1),(uint16_t)(CROSS_Y0 + m));
+    GUI_DrawLine((uint16_t)0,              (uint16_t)(FOOTER_Y - m),(uint16_t)0,              (uint16_t)(FOOTER_Y - 1));
+    GUI_DrawLine((uint16_t)0,              (uint16_t)(FOOTER_Y - 1),(uint16_t)m,              (uint16_t)(FOOTER_Y - 1));
+    GUI_DrawLine((uint16_t)(LCD_WIDTH - 1),(uint16_t)(FOOTER_Y - m),(uint16_t)(LCD_WIDTH - 1),(uint16_t)(FOOTER_Y - 1));
+    GUI_DrawLine((uint16_t)(LCD_WIDTH - m),(uint16_t)(FOOTER_Y - 1),(uint16_t)(LCD_WIDTH - 1),(uint16_t)(FOOTER_Y - 1));
+
+    // Footer: 3 small colored indicators (ESC hint)
+    GUI_FillRectColor(4u, (uint16_t)(FOOTER_Y + 3), 12u, (uint16_t)(LCD_HEIGHT - 3), 0xF800u);  // red ESC
+    GUI_FillRectColor(16u,(uint16_t)(FOOTER_Y + 3), 24u, (uint16_t)(LCD_HEIGHT - 3), 0x4228u);
+    GUI_FillRectColor(28u,(uint16_t)(FOOTER_Y + 3), 60u, (uint16_t)(LCD_HEIGHT - 3), 0x2104u);
 }
 
 // ---------------------------------------------------------------------------
-// Public API
+// Scene API
 // ---------------------------------------------------------------------------
 
 void SceneCalib_OnEnter(void)
@@ -147,38 +264,10 @@ void SceneCalib_OnEnter(void)
     min_y = 0xFFFFu; max_y = 0u;
     cross_x = cross_y = -1;
     prev_pen = false;
+    has_data = false;
 
-    GUI_Clear((uint16_t)COL_BG);
-
-    // Title bar
-    GUI_FillRectColor(0, 0, LCD_WIDTH, TITLE_H, COL_TITLE_BG);
-    setFontSize(FONT_SIZE_NORMAL);
-    GUI_SetTextMode(GUI_TEXTMODE_TRANS);
-    GUI_SetColor(WHITE);
-    _GUI_DispStringInRect(0, 6, LCD_WIDTH, TITLE_H - 4,
-                          (const uint8_t *)"TOUCH CALIBRATION");
-
-    // Hint line
-    GUI_SetColor((uint16_t)COL_HINT);
-    _GUI_DispStringInRect(2, HINT_Y, LCD_WIDTH - 2, HINT_Y + 16,
-                          (const uint8_t *)"Tap 4 corners. Note MIN/MAX. ESC = done.");
-
-    // Bar labels
-    GUI_SetColor((uint16_t)COL_BAR_X);
-    _GUI_DispStringInRect(2, BAR_X_Y, 16, BAR_X_Y + 16, (const uint8_t *)"X");
-    GUI_SetColor((uint16_t)COL_BAR_Y);
-    _GUI_DispStringInRect(2, BAR_Y_Y, 16, BAR_Y_Y + 16, (const uint8_t *)"Y");
-
-    // Bar backgrounds
-    GUI_FillRectColor(18, (uint16_t)BAR_X_Y, LCD_WIDTH, (uint16_t)(BAR_X_Y + 16), COL_BAR_BG);
-    GUI_FillRectColor(18, (uint16_t)BAR_Y_Y, LCD_WIDTH, (uint16_t)(BAR_Y_Y + 16), COL_BAR_BG);
-
-    // Footer
-    GUI_SetColor((uint16_t)COL_FOOTER);
-    _GUI_DispStringInRect(2, FOOTER_Y, LCD_WIDTH - 2, LCD_HEIGHT - 2,
-                          (const uint8_t *)"ui_nav.c: TOUCH_X/Y_MIN/MAX");
-
-    redraw_data();
+    draw_static_frame();
+    redraw_values();
 }
 
 void SceneCalib_OnUpdate(uint32_t now_ms)
@@ -194,44 +283,51 @@ void SceneCalib_OnUpdate(uint32_t now_ms)
         if (rx != 0 && ry != 0) {
             raw_x = rx;
             raw_y = ry;
+            has_data = true;
 
-            // Update min/max
             if (rx < min_x) min_x = rx;
             if (rx > max_x) max_x = rx;
             if (ry < min_y) min_y = ry;
             if (ry > max_y) max_y = ry;
 
-            // Update ADC bars (offset 18px to clear the "X"/"Y" label)
             draw_bar(BAR_X_Y, rx, COL_BAR_X);
             draw_bar(BAR_Y_Y, ry, COL_BAR_Y);
+            redraw_values();
 
-            // Move crosshair: erase previous, draw new
-            int16_t nx = map_to_screen_x(rx);
-            int16_t ny = map_to_screen_y(ry);
-
-            // Constrain crosshair Y to the dedicated area
-            if (ny < CROSS_AREA_Y) ny = (int16_t)CROSS_AREA_Y + 8;
-            if (ny > FOOTER_Y - 4) ny = (int16_t)(FOOTER_Y - 4);
+            // Map raw to screen using CURRENT calibration (shows drift)
+            int32_t nx_i = (int32_t)(rx - 200) * LCD_WIDTH  / (3900 - 200);
+            int32_t ny_i = (int32_t)(ry - 200) * LCD_HEIGHT / (3900 - 200);
+            int16_t nx = (nx_i < 0) ? 0 : (nx_i >= LCD_WIDTH  ? LCD_WIDTH  - 1 : (int16_t)nx_i);
+            int16_t ny = (ny_i < 0) ? CROSS_Y0 : (ny_i >= FOOTER_Y ? FOOTER_Y - 2 : (int16_t)ny_i);
+            if (ny < CROSS_Y0) ny = (int16_t)CROSS_Y0 + 10;
 
             if (cross_x >= 0)
-                draw_crosshair(cross_x, cross_y, (uint16_t)COL_BG);  // erase old
-
+                draw_crosshair(cross_x, cross_y, (uint16_t)COL_BG);
             draw_crosshair(nx, ny, COL_CROSS);
             cross_x = nx;
             cross_y = ny;
-
-            redraw_data();
         }
     }
 
-    if (!pen && prev_pen) {
-        // Pen lifted — freeze display, keep crosshair
-    }
-
-    prev_pen = pen;
+    if (!pen) prev_pen = false;
+    else      prev_pen = true;
 }
 
 void SceneCalib_OnExit(void)
 {
-    // nothing to release
+    if (!has_data || min_x >= max_x || min_y >= max_y)
+        return;   // nothing valid to save
+
+    // Brief green flash to signal save
+    GUI_FillRectColor(0, 0, LCD_WIDTH, LCD_HEIGHT, (uint16_t)COL_SAVED);
+
+    Settings_t s;
+    s.touch_x_min = min_x;
+    s.touch_x_max = max_x;
+    s.touch_y_min = min_y;
+    s.touch_y_max = max_y;
+    Settings_Save(&s);
+
+    // Apply immediately — no reboot needed
+    Nav_SetCalibration(min_x, max_x, min_y, max_y);
 }

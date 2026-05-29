@@ -21,15 +21,15 @@
 #define REPEAT_RATE_MS   120u   // interval between subsequent repeats
 
 // ---------------------------------------------------------------------------
-// Touch calibration — adjust per device if coords feel off
-// Raw ADC range (12-bit) mapped to screen pixels.
+// Touch calibration — runtime values, overridable via Nav_SetCalibration()
 // ---------------------------------------------------------------------------
 #define TOUCH_X_CMD  0xD0   // XPT2046 channel: X axis
 #define TOUCH_Y_CMD  0x90   // XPT2046 channel: Y axis
-#define TOUCH_X_MIN  200u
-#define TOUCH_X_MAX  3900u
-#define TOUCH_Y_MIN  200u
-#define TOUCH_Y_MAX  3900u
+
+static uint16_t cal_x_min = 200u;
+static uint16_t cal_x_max = 3900u;
+static uint16_t cal_y_min = 200u;
+static uint16_t cal_y_max = 3900u;
 
 // ---------------------------------------------------------------------------
 // Module state
@@ -68,19 +68,19 @@ static int16_t clamp16(int32_t v, int16_t lo, int16_t hi)
 
 static int16_t touch_raw_to_screen_x(uint16_t raw)
 {
-    if (raw < TOUCH_X_MIN) raw = TOUCH_X_MIN;
-    if (raw > TOUCH_X_MAX) raw = TOUCH_X_MAX;
-    int32_t px = (int32_t)(raw - TOUCH_X_MIN) * LCD_WIDTH
-                 / (int32_t)(TOUCH_X_MAX - TOUCH_X_MIN);
+    if (raw < cal_x_min) raw = cal_x_min;
+    if (raw > cal_x_max) raw = cal_x_max;
+    int32_t px = (int32_t)(raw - cal_x_min) * LCD_WIDTH
+                 / (int32_t)(cal_x_max - cal_x_min);
     return clamp16(px, 0, LCD_WIDTH - 1);
 }
 
 static int16_t touch_raw_to_screen_y(uint16_t raw)
 {
-    if (raw < TOUCH_Y_MIN) raw = TOUCH_Y_MIN;
-    if (raw > TOUCH_Y_MAX) raw = TOUCH_Y_MAX;
-    int32_t py = (int32_t)(raw - TOUCH_Y_MIN) * LCD_HEIGHT
-                 / (int32_t)(TOUCH_Y_MAX - TOUCH_Y_MIN);
+    if (raw < cal_y_min) raw = cal_y_min;
+    if (raw > cal_y_max) raw = cal_y_max;
+    int32_t py = (int32_t)(raw - cal_y_min) * LCD_HEIGHT
+                 / (int32_t)(cal_y_max - cal_y_min);
     return clamp16(py, 0, LCD_HEIGHT - 1);
 }
 
@@ -175,4 +175,13 @@ void Nav_GetTouchPos(int16_t *x, int16_t *y)
 {
     if (x) *x = touch_last_x;
     if (y) *y = touch_last_y;
+}
+
+void Nav_SetCalibration(uint16_t x_min, uint16_t x_max,
+                        uint16_t y_min, uint16_t y_max)
+{
+    cal_x_min = x_min;
+    cal_x_max = x_max;
+    cal_y_min = y_min;
+    cal_y_max = y_max;
 }

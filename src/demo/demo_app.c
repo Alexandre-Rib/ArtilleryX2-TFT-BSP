@@ -26,6 +26,7 @@
 #include "scene_keyboard.h"
 #include "scene_calib.h"
 #include "keyboard.h"
+#include "settings.h"
 #include "GUI.h"
 #include "LCD_Colors.h"
 #include "os_timer.h"
@@ -185,6 +186,12 @@ static void handle_menu_event(NavEvent_t ev)
 
 void DemoApp_Run(void)
 {
+    // Load saved calibration from W25Q64; apply defaults if none found
+    Settings_t cfg;
+    if (Settings_Load(&cfg))
+        Nav_SetCalibration(cfg.touch_x_min, cfg.touch_x_max,
+                           cfg.touch_y_min, cfg.touch_y_max);
+
     Nav_Init();
     Keyboard_Init();
 

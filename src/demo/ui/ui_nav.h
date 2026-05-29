@@ -40,4 +40,9 @@ NavEvent_t Nav_Poll(void);
 // Valid only in the same iteration that Nav_Poll() returned NAV_TOUCH
 void Nav_GetTouchPos(int16_t *x, int16_t *y);
 
+// Override the touch calibration constants at runtime.
+// Call after Settings_Load() to apply saved calibration.
+void Nav_SetCalibration(uint16_t x_min, uint16_t x_max,
+                        uint16_t y_min, uint16_t y_max);
+
 #endif

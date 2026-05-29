@@ -68,7 +68,14 @@ enum
 #define HARDWARE_SHORT  "TFT28"
 
 // ---------------------------------------------------------------------------
-// Public API â€” callers never need to know about W25Q64 internals
+// Settings sector — last 4 KB of W25Q64 (8 MB = 0x800000)
+// Placed at the end so it never collides with assets growing from address 0.
+// ---------------------------------------------------------------------------
+#define SETTINGS_ADDR  0x7FF000u   // last sector of W25Q64
+#define SETTINGS_SIZE  W25QXX_SECTOR_SIZE
+
+// ---------------------------------------------------------------------------
+// Public API — callers never need to know about W25Q64 internals
 // ---------------------------------------------------------------------------
 void FlashMap_Read(uint32_t addr, uint8_t * buf, uint32_t size);
 void FlashMap_Write(uint32_t addr, const uint8_t * buf, uint32_t size);
