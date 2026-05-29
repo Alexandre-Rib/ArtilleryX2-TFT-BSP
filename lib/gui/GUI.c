@@ -1,6 +1,5 @@
 #include "GUI.h"
 #include "LCD_Init.h"
-#include "lcd.h"
 #include "my_misc.h"
 #include "os_timer.h"
 #include "Language.h"
