@@ -46,34 +46,72 @@ carte, par exemple :
 - UART / Serial (DMA)
 - Chargement d'assets BMP depuis SD vers flash externe
 
-## Build
+## Pré-requis
 
+### 1. VS Code + extension PlatformIO
+
+Télécharger [VS Code](https://code.visualstudio.com), puis installer l'extension
+**PlatformIO IDE** depuis le marketplace (rechercher « PlatformIO »).
+
+C'est **le seul outil à installer manuellement**. PlatformIO télécharge ensuite
+automatiquement au premier build :
+- La toolchain ARM (`arm-none-eabi-gcc`)
+- La plateforme `ststm32`
+- Le framework CMSIS
+
+> Pas besoin d'installer `arm-none-eabi-gcc` séparément ni aucun autre outil.
+
+### 2. Cloner le dépôt
+
+```bash
+git clone https://github.com/<user>/ArtilleryX2-TFT-BSP.git
+cd ArtilleryX2-TFT-BSP
 ```
-Plateforme  : PlatformIO, ststm32
-Framework   : CMSIS
-Environnement : MKS_TFT28_V4_0
-```
+
+## Compiler
+
+### Via VS Code
+
+1. Ouvrir le dossier dans VS Code
+2. Cliquer sur l'icône PlatformIO dans la barre latérale
+3. Choisir **Build** (ou `Ctrl+Alt+B`)
+
+### Via le terminal
 
 ```bash
 pio run -e MKS_TFT28_V4_0
 ```
 
-Le `.bin` produit est copié sous `mkstft28.bin` à la racine de la carte SD.
-Au démarrage, le bootloader le flashe à `0x08007000` puis démarre l'application.
+Le binaire est généré dans `out/MKS_TFT28_V4_0/release/MKSTFT28.bin`.
 
-## Structure
+## Flasher sur la carte
+
+Pas de ST-Link — le bootloader Artillery gère le flash via carte SD :
+
+1. Copier `MKSTFT28.bin` à la racine de la carte SD
+2. Renommer le fichier en **`mkstft28.bin`** (minuscules obligatoires)
+3. Insérer la carte SD dans la TFT et mettre sous tension
+4. Le bootloader détecte le fichier, le flashe à `0x08007000`, le renomme en `.cur` puis redémarre
+
+> Si le firmware est cassé, remettre l'original Artillery sur la SD pour restaurer.
+
+## Structure du projet
 
 ```
-src/          — main.c (point d'entrée)
+src/              — main.c (point d'entrée)
 lib/
-  API/        — GUI, LCD_Colors, HW_Init, boot (asset loader)
-  Hal/        — Drivers hardware : LCD, SPI, UART, USB, W25Qxx, XPT2046
-  Fatfs/      — FatFS standard
-  Variants/   — Configuration pinout MKS_TFT28
-  cmsis/      — CMSIS STM32F10x
-  fwlib/      — Standard Peripheral Library STM32F10x
-scripts/      — auto_includes.py, IAP, deploy
-ldscripts/    — Script linker (offset 0x08007000)
+  bsp/            — Hardware pur : init, timers, CMSIS, fwlib, FatFS
+    Hal/          — Drivers composants : LCD HX8558, XPT2046, W25Qxx, SPI, UART, USB
+    cmsis/        — CMSIS STM32F10x
+    fwlib/        — Standard Peripheral Library STM32F10x
+    Fatfs/        — FatFS
+  gui/            — API graphique : GUI, LCD_Colors, ui_draw, font_render
+  assets/         — Ressources flash : flash_map, font_atlas, Language
+  utils/          — Utilitaires génériques : utf8, my_misc, printf, base64
+boards/           — Définition board PlatformIO (STM32F107VC_0x7000)
+ldscripts/        — Script linker (offset 0x08007000 pour le bootloader)
+scripts/          — Scripts de build PlatformIO (includes auto, IAP, deploy)
+out/              — Binaires de release (généré au build)
 ```
 
 ## Projet d'origine
@@ -129,34 +167,72 @@ This BSP is designed as a foundation for standalone embedded projects on this bo
 - UART / Serial with DMA
 - BMP asset loader (SD → external flash)
 
+## Prerequisites
+
+### 1. VS Code + PlatformIO extension
+
+Download [VS Code](https://code.visualstudio.com), then install the
+**PlatformIO IDE** extension from the marketplace (search for « PlatformIO »).
+
+That is **the only tool you need to install manually**. On the first build,
+PlatformIO automatically downloads:
+- The ARM toolchain (`arm-none-eabi-gcc`)
+- The `ststm32` platform
+- The CMSIS framework
+
+> No need to install `arm-none-eabi-gcc` separately or any other tool.
+
+### 2. Clone the repository
+
+```bash
+git clone https://github.com/<user>/ArtilleryX2-TFT-BSP.git
+cd ArtilleryX2-TFT-BSP
+```
+
 ## Building
 
-```
-Platform    : PlatformIO, ststm32
-Framework   : CMSIS
-Environment : MKS_TFT28_V4_0
-```
+### From VS Code
+
+1. Open the folder in VS Code
+2. Click the PlatformIO icon in the sidebar
+3. Click **Build** (or `Ctrl+Alt+B`)
+
+### From the terminal
 
 ```bash
 pio run -e MKS_TFT28_V4_0
 ```
 
-The produced `.bin` is renamed `mkstft28.bin` and placed at the SD card root.
-On power-up, the bootloader flashes it to `0x08007000` and starts the application.
+The binary is generated at `out/MKS_TFT28_V4_0/release/MKSTFT28.bin`.
+
+## Flashing
+
+No ST-Link required — the Artillery bootloader handles flashing via SD card:
+
+1. Copy `MKSTFT28.bin` to the root of the SD card
+2. Rename it to **`mkstft28.bin`** (lowercase required)
+3. Insert the SD card into the TFT board and power on
+4. The bootloader detects the file, flashes it to `0x08007000`, renames it to `.cur`, then reboots
+
+> If the firmware is broken, put the original Artillery firmware on the SD card to restore.
 
 ## Repository layout
 
 ```
-src/          — main.c (entry point)
+src/              — main.c (entry point)
 lib/
-  API/        — GUI, LCD_Colors, HW_Init, boot (asset loader)
-  Hal/        — Hardware drivers: LCD, SPI, UART, USB, W25Qxx, XPT2046
-  Fatfs/      — Standard FatFS
-  Variants/   — MKS_TFT28 pin configuration
-  cmsis/      — CMSIS STM32F10x
-  fwlib/      — STM32F10x Standard Peripheral Library
-scripts/      — auto_includes.py, IAP, deploy helpers
-ldscripts/    — Linker script (0x08007000 offset)
+  bsp/            — Pure hardware: init, timers, CMSIS, fwlib, FatFS
+    Hal/          — Component drivers: LCD HX8558, XPT2046, W25Qxx, SPI, UART, USB
+    cmsis/        — CMSIS STM32F10x
+    fwlib/        — STM32F10x Standard Peripheral Library
+    Fatfs/        — FatFS
+  gui/            — Graphics API: GUI, LCD_Colors, ui_draw, font_render
+  assets/         — Flash resources: flash_map, font_atlas, Language
+  utils/          — Generic utilities: utf8, my_misc, printf, base64
+boards/           — PlatformIO board definition (STM32F107VC_0x7000)
+ldscripts/        — Linker script (0x08007000 offset for the bootloader)
+scripts/          — PlatformIO build scripts (auto-includes, IAP, deploy)
+out/              — Release binaries (generated at build time)
 ```
 
 ## Upstream project
