@@ -1,9 +1,5 @@
-#ifndef _KNOB_LED_H_
+﻿#ifndef _KNOB_LED_H_
 #define _KNOB_LED_H_
-
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 #include <stdint.h>    // for uint32_t etc.
 #include "mks_tft28.h"  // for KNOB_LED_COLOR_PIN etc.
@@ -16,10 +12,6 @@ extern "C" {
   #define KNOB_LED_SET_COLOR(color, neopixel_pixels) Knob_LED_SetColor(color, neopixel_pixels)
 #else
   #define KNOB_LED_SET_COLOR(color, neopixel_pixels)
-#endif
-
-#ifdef __cplusplus
-}
 #endif
 
 #endif

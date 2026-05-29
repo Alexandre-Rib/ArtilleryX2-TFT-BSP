@@ -1,9 +1,5 @@
-#ifndef _CHAR_ICON_H_
+﻿#ifndef _CHAR_ICON_H_
 #define _CHAR_ICON_H_
-
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 #include <stdint.h>
 #include "GUI.h"
@@ -24,9 +20,5 @@ extern const uint16_t charIconColor[CHARICON_NUM];
 
 uint8_t * IconCharSelect(uint8_t sel);
 void drawCharIcon(const GUI_RECT * rect, ALIGN_POSITION iconalign, uint16_t iconindex, bool drawBgColor, uint16_t btn_color);
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif

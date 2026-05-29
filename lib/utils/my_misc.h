@@ -1,9 +1,5 @@
-#ifndef _MY_MISC_H_
+﻿#ifndef _MY_MISC_H_
 #define _MY_MISC_H_
-
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -53,7 +49,7 @@ extern "C" {
 #define MINUTES(t) (t % (60 * 60) / 60)  // minutes remaining to next hour
 #define SECONDS(t) (t % 60)              // seconds remaining to next minute
 
-// strtod_ligth: lightweight strtod without exponential support — call explicitly if needed
+// strtod_ligth: lightweight strtod without exponential support â€” call explicitly if needed
 
 #define strncpy(...) \
   do                 \
@@ -84,9 +80,5 @@ void time_2_string(char * buf, const char * str_format, uint32_t time);     // c
 double strtod_ligth(char * str, char ** end_ptr);              // light weight strtod() function without exponential support
 void strncpy_pad(char * dest, const char * src, size_t n);     // light weight and safe strncpy() function with padding
 void strncpy_no_pad(char * dest, const char * src, size_t n);  // light weight and safe strncpy() function without padding
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif

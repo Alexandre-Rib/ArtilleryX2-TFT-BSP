@@ -33,9 +33,7 @@
 #ifndef __SYSTEM_STM32F10X_H
 #define __SYSTEM_STM32F10X_H
 
-#ifdef __cplusplus
- extern "C" {
-#endif
+
 
 /** @addtogroup STM32F10x_System_Includes
   * @{
@@ -81,10 +79,6 @@ extern void SystemClockInit(void);
 /**
   * @}
   */
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif /*__SYSTEM_STM32F10X_H */
 

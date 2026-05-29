@@ -1,9 +1,5 @@
-#ifndef _FLASH_MAP_H_
+﻿#ifndef _FLASH_MAP_H_
 #define _FLASH_MAP_H_
-
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 #include <stdint.h>
 
@@ -31,7 +27,7 @@ extern "C" {
 #define SMALL_ICON_MAX_SIZE      0x2000u
 
 // ---------------------------------------------------------------------------
-// Address map — sequential layout in W25Q64
+// Address map â€” sequential layout in W25Q64
 // ---------------------------------------------------------------------------
 #define LOGO_ADDR             0x0u
 #define WORD_UNICODE_ADDR     LOGO_MAX_SIZE
@@ -51,7 +47,7 @@ extern "C" {
 #define SMALL_ICON_ADDR(num)  ((num) * SMALL_ICON_MAX_SIZE + SMALL_ICON_START_ADDR)
 
 // ---------------------------------------------------------------------------
-// Icon index enum (auto-generated — add new icons in icon_list.inc only)
+// Icon index enum (auto-generated â€” add new icons in icon_list.inc only)
 // ---------------------------------------------------------------------------
 enum
 {
@@ -70,15 +66,11 @@ enum
 #define HARDWARE_SHORT  "TFT28"
 
 // ---------------------------------------------------------------------------
-// Public API — callers never need to know about W25Q64 internals
+// Public API â€” callers never need to know about W25Q64 internals
 // ---------------------------------------------------------------------------
 void FlashMap_Read(uint32_t addr, uint8_t * buf, uint32_t size);
 void FlashMap_Write(uint32_t addr, const uint8_t * buf, uint32_t size);
 void FlashMap_WritePage(uint32_t addr, const uint8_t * buf, uint16_t size);
 void FlashMap_EraseSector(uint32_t addr);
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif

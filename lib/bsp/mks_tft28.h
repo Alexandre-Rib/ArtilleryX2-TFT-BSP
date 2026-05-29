@@ -6,14 +6,12 @@
 
 // MCU registers (stm32f10x.h also includes this file — header guards handle the circle)
 #include "stm32f10x.h"
+// GPIO pin name aliases (PA0…PF15)
+#include "STM32Fxx_Pins.h"
 
 // ---------------------------------------------------------------------------
-// LCD driver
+// LCD driver : HX8558 (seul driver supporté)
 // ---------------------------------------------------------------------------
-#define HX8558  (1 << 4)
-
-#define LCD_DRIVER_IS(n)  ((TFTLCD_DRIVER) == (n))
-#define LCD_DRIVER_HAS(n) (((TFTLCD_DRIVER) & (n)) == (n))
 
 // ---------------------------------------------------------------------------
 // Display resolution (320x240 landscape)
@@ -73,9 +71,6 @@
 // ---------------------------------------------------------------------------
 // LCD (HX8558, 16-bit parallel)
 // ---------------------------------------------------------------------------
-#ifndef TFTLCD_DRIVER
-  #define TFTLCD_DRIVER HX8558
-#endif
 #ifndef LCD_DATA_16BIT
   #define LCD_DATA_16BIT 1
 #endif

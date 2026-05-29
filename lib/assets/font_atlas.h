@@ -1,9 +1,5 @@
-#ifndef _FONT_ATLAS_H_
+﻿#ifndef _FONT_ATLAS_H_
 #define _FONT_ATLAS_H_
-
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 #include <stdint.h>
 #include "utf8.h"   // UTF8_CHAR
@@ -36,9 +32,5 @@ void FontAtlas_SetSize(uint16_t size);
 
 // Decode one UTF-8 character and resolve its flash address + pixel dimensions
 void FontAtlas_GetCharInfo(const uint8_t * ch, CHAR_INFO * pInfo);
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif

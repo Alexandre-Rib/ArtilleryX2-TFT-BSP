@@ -1,4 +1,4 @@
-#ifndef _LCD_COLORS_H_
+﻿#ifndef _LCD_COLORS_H_
 #define _LCD_COLORS_H_
 
 #include <stdint.h>

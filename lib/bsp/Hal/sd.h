@@ -1,9 +1,5 @@
-#ifndef _SD_H_
+﻿#ifndef _SD_H_
 #define _SD_H_
-
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 #include <stdint.h>    // for uint8_t etc.
 #include "mks_tft28.h"  // for SD_SPI_SUPPORT, SD_SDIO_SUPPORT etc.
@@ -23,10 +19,6 @@ extern "C" {
   uint8_t SD_WriteDisk(uint8_t * buf, uint32_t sector, uint8_t cnt);  // write SD card, fatfs / usb call
 #else  // e.g. SD_SDIO_SUPPORT
   #include "sdio_sdcard.h"
-#endif
-
-#ifdef __cplusplus
-}
 #endif
 
 #endif

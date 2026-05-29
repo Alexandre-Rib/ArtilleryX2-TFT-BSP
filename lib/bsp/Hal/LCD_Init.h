@@ -1,9 +1,5 @@
-#ifndef _LCD_INIT_H_
+﻿#ifndef _LCD_INIT_H_
 #define _LCD_INIT_H_
-
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 #include <stdint.h>    // for uint8_t etc.
 #include "mks_tft28.h"  // for LCD_DATA_16BIT, LCD_LED_PWM_CHANNEL etc.
@@ -28,9 +24,5 @@ extern "C" {
 void LCD_Init(void);
 void LCD_RefreshDirection(uint8_t rotate);
 void LCD_SetWindow(uint16_t sx, uint16_t sy, uint16_t ex, uint16_t ey);
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif

@@ -1,8 +1,5 @@
 #include "lcd.h"
 #include "delay.h"
-
-#if LCD_DRIVER_HAS(HX8558)
-
 #include "HX8558.h"
 
 #define HX8558_0_DEGREE_REG_VALUE   0xA4
@@ -117,12 +114,7 @@ void HX8558_Init_Sequential(void)
 void HX8558_SetDirection(uint8_t rotate)
 {
   LCD_WR_REG(0X36);
-
-  #ifdef PORTRAIT_MODE
-    LCD_WR_DATA(rotate ? HX8558_270_DEGREE_REG_VALUE : HX8558_90_DEGREE_REG_VALUE);
-  #else
-    LCD_WR_DATA(rotate ? HX8558_180_DEGREE_REG_VALUE : HX8558_0_DEGREE_REG_VALUE);
-  #endif
+  LCD_WR_DATA(rotate ? HX8558_180_DEGREE_REG_VALUE : HX8558_0_DEGREE_REG_VALUE);
 }
 
 void HX8558_SetWindow(uint16_t sx, uint16_t sy, uint16_t ex, uint16_t ey)
@@ -149,5 +141,3 @@ uint32_t HX8558_ReadPixel_24Bit(int16_t x, int16_t y)
        | (((uint32_t)(pix >>  5) & 0x3F) << 10)
        | (((uint32_t)(pix      ) & 0x1F) <<  3);
 }
-
-#endif  // LCD_DRIVER_HAS(HX8558)

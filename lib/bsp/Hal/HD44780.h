@@ -1,9 +1,5 @@
-#ifndef _HD44780_H
+﻿#ifndef _HD44780_H
 #define _HD44780_H
-
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 #include <stdbool.h>
 #include <stdint.h>         // for uint8_t etc.
@@ -15,10 +11,6 @@ extern "C" {
   void HD44780_Config(CIRCULAR_QUEUE * queue);
   bool HD44780_writeData(void);
   bool HD44780_getData(uint8_t * data);
-#endif
-
-#ifdef __cplusplus
-}
 #endif
 
 #endif

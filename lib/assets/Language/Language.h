@@ -1,9 +1,5 @@
-#ifndef _LANGUAGE_H_
+﻿#ifndef _LANGUAGE_H_
 #define _LANGUAGE_H_
-
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 #include <stdbool.h>
 #include "mks_tft28.h"
@@ -70,9 +66,5 @@ void loadLabelText(char * buf, uint16_t index);
 
 // initialize and preload label text
 #define LABEL_CHAR(x, i) char x[MAX_LANG_LABEL_LENGTH]; loadLabelText(x, i);
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif

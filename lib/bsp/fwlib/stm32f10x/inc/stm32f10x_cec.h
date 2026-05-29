@@ -24,10 +24,6 @@
 #ifndef __STM32F10x_CEC_H
 #define __STM32F10x_CEC_H
 
-#ifdef __cplusplus
- extern "C" {
-#endif
-
 /* Includes ------------------------------------------------------------------*/
 #include "stm32f10x.h"
 
@@ -189,9 +185,6 @@ void CEC_ClearFlag(uint32_t CEC_FLAG);
 ITStatus CEC_GetITStatus(uint8_t CEC_IT);
 void CEC_ClearITPendingBit(uint16_t CEC_IT);
 
-#ifdef __cplusplus
-}
-#endif
 
 #endif /* __STM32F10x_CEC_H */
 

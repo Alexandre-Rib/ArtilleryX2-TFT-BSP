@@ -1,9 +1,5 @@
-#ifndef _UI_DRAW_H_
+﻿#ifndef _UI_DRAW_H_
 #define _UI_DRAW_H_
-
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -11,21 +7,12 @@ extern "C" {
 #include "GUI.h"       // for GUI_POINT etc.
 #include <string.h>
 
-#ifdef PORTRAIT_MODE
-  #define SPACE_X          ((LCD_WIDTH - ICON_WIDTH * 3) / 3)
-  #define SPACE_X_PER_ICON (LCD_WIDTH / 3)
-#else
-  #define SPACE_X          ((LCD_WIDTH - ICON_WIDTH * 4) / 4)
-  #define SPACE_X_PER_ICON (LCD_WIDTH / 4)
-#endif
+#define SPACE_X          ((LCD_WIDTH - ICON_WIDTH * 4) / 4)
+#define SPACE_X_PER_ICON (LCD_WIDTH / 4)
 
 #define START_X            (SPACE_X / 2)
 
-#ifdef PORTRAIT_MODE
-  #define SPACE_Y          ((LCD_HEIGHT - ICON_START_Y - ICON_HEIGHT * 3) / 3)
-#else
-  #define SPACE_Y          ((LCD_HEIGHT - ICON_START_Y - ICON_HEIGHT * 2) / 2)
-#endif
+#define SPACE_Y            ((LCD_HEIGHT - ICON_START_Y - ICON_HEIGHT * 2) / 2)
 
 // select marlin or bigtree
 #define SPACE_SELEX      ((LCD_WIDTH - ICON_WIDTH * 2) / 4)
@@ -56,9 +43,5 @@ void ICON_ReadBuffer(uint16_t * buf, uint16_t x, uint16_t y, int16_t w, int16_t 
 uint16_t ICON_ReadPixel(uint32_t address, uint16_t w, uint16_t h, int16_t x, int16_t y);
 void SMALLICON_ReadDisplay(uint16_t sx, uint16_t sy, uint8_t icon);
 void ICON_PressedDisplay(uint16_t sx, uint16_t sy, uint8_t icon);
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif

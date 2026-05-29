@@ -1,9 +1,5 @@
-#ifndef _LANGUAGE_KEYWORDS_H_
+﻿#ifndef _LANGUAGE_KEYWORDS_H_
 #define _LANGUAGE_KEYWORDS_H_
-
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 #include <stdbool.h>
 #include "mks_tft28.h"
@@ -385,9 +381,5 @@ extern "C" {
 #define LANG_KEY_CONNECT_PROBE          "label_connect_probe:"
 #define LANG_KEY_DISCONNECT_PROBE       "label_disconnect_probe:"
 #define LANG_KEY_CALIBRATION            "label_calibration:"
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif
