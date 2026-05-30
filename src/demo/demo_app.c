@@ -1,223 +1,257 @@
 /**
  * @file    demo_app.c
- * @brief   BSP showcase demo — 3x2 navigable menu + scene dispatcher
- * @version 1.0
+ * @brief   BSP showcase demo — main menu + scene dispatcher
+ * @version 3.0
  * @date    Created:       2026-05-29
- *          Last modified: 2026-05-29
+ *          Last modified: 2026-05-30
  * @note    Developed with Claude Sonnet 4.6 (Anthropic)
  *
- *  Menu layout (320x240, 8px gaps):
+ *  Navigation pattern (see ui_menu.h for the full specification):
+ *    - Main menu is a Menu_t with 6 items in a 3x2 grid.
+ *    - Keyboard arrows move focus (cyan aura); Enter activates.
+ *    - Touch tap focuses + activates in one gesture.
+ *    - NAVIGATION_BACK on the main menu has no effect (root, no parent).
+ *    - Each scene can call DemoApp_RequestExit() to return to the main menu.
  *
- *    [0 Image    ][1 Animation][2 Keyboard ]
- *    [3 ---      ][4 ---      ][5 ---      ]
+ *  Scene lifecycle:  on_enter() -> on_update(now_ms, event) -> on_exit()
+ *    on_update returns true  -> scene consumed NAVIGATION_BACK internally
+ *    on_update returns false -> demo_app handles NAVIGATION_BACK (exits scene)
  *
- *  Navigation:
- *    Keyboard arrows  — move focus (wraps within row / column)
- *    Enter            — enter scene
- *    Escape           — back to menu (from inside a scene)
- *    Touch tap        — move focus + enter on same tap
+ *  Resource installation (one-time at first boot):
+ *    ResInstaller_Run() copies BMP files from SD /res/pic/ to W25Q64.
+ *    If resources are already installed the call returns immediately.
+ *    If the SD card is absent, icon buttons display a fallback cross.
  */
 
 #include "demo_app.h"
+#include "ui_menu.h"
 #include "ui_button.h"
 #include "ui_nav.h"
+#include "img_draw.h"
+#include "res_map.h"
+#include "res_installer.h"
+#include "font_embedded.h"
+#include "settings.h"
 #include "scene_image.h"
 #include "scene_anim.h"
 #include "scene_keyboard.h"
 #include "scene_calib.h"
 #include "keyboard.h"
-#include "settings.h"
 #include "GUI.h"
 #include "LCD_Colors.h"
 #include "os_timer.h"
 #include <stddef.h>
-
-// ---------------------------------------------------------------------------
-// Menu geometry — fits exactly in 320x240 with 8px gaps
-// ---------------------------------------------------------------------------
-#define MENU_COLS   3
-#define MENU_ROWS   2
-#define MENU_COUNT  (MENU_COLS * MENU_ROWS)
-
-#define BTN_GAP  8
-#define BTN_W    ((LCD_WIDTH  - (MENU_COLS + 1) * BTN_GAP) / MENU_COLS)   // 96
-#define BTN_H    ((LCD_HEIGHT - (MENU_ROWS + 1) * BTN_GAP) / MENU_ROWS)   // 108
-
-// top-left corner of button [col][row]
-#define BTN_X(col)  (BTN_GAP + (col) * (BTN_W + BTN_GAP))
-#define BTN_Y(row)  (BTN_GAP + (row) * (BTN_H + BTN_GAP))
+#include <stdbool.h>
 
 // ---------------------------------------------------------------------------
 // Scene descriptor
 // ---------------------------------------------------------------------------
 typedef struct {
     void (*on_enter)(void);
-    void (*on_update)(uint32_t now_ms);
+    bool (*on_update)(uint32_t now_ms, NavigationEvent_t event);
     void (*on_exit)(void);
 } Scene_t;
 
 // ---------------------------------------------------------------------------
-// Button + scene table (index matches: 0=top-left … 5=bottom-right)
+// Main menu geometry — 3x2 grid filling 320x240 with 8-pixel gaps
 // ---------------------------------------------------------------------------
-static Button_t buttons[MENU_COUNT] = {
-    { BTN_X(0), BTN_Y(0), BTN_W, BTN_H, "Image\nFlash/SD", BTN_NORMAL   },
-    { BTN_X(1), BTN_Y(0), BTN_W, BTN_H, "Animation\n+ Sound",  BTN_NORMAL   },
-    { BTN_X(2), BTN_Y(0), BTN_W, BTN_H, "Keyboard\nLive",      BTN_NORMAL   },
-    { BTN_X(0), BTN_Y(1), BTN_W, BTN_H, "Touch\nCalib",         BTN_NORMAL   },
-    { BTN_X(1), BTN_Y(1), BTN_W, BTN_H, "---",                 BTN_DISABLED },
-    { BTN_X(2), BTN_Y(1), BTN_W, BTN_H, "---",                 BTN_DISABLED },
+#define MENU_COLS  3
+#define MENU_ROWS  2
+#define BTN_GAP    8
+#define BTN_W      ((LCD_WIDTH  - (MENU_COLS + 1) * BTN_GAP) / MENU_COLS)   // 96
+#define BTN_H      ((LCD_HEIGHT - (MENU_ROWS + 1) * BTN_GAP) / MENU_ROWS)   // 108
+
+#define BTN_X(col) (BTN_GAP + (col) * (BTN_W + BTN_GAP))
+#define BTN_Y(row) (BTN_GAP + (row) * (BTN_H + BTN_GAP))
+
+// Image area inside each button:
+//   icon  80x80 centered horizontally, 4px from top
+//   label remaining space at the bottom
+#define ICON_X_OFF  ((BTN_W - (int16_t)RES_IMG_W) / 2)   // 8 px
+#define ICON_Y_OFF  4
+#define LABEL_Y_OFF (ICON_Y_OFF + (int16_t)RES_IMG_H + 2) // just below icon
+
+// ---------------------------------------------------------------------------
+// Forward declarations
+// ---------------------------------------------------------------------------
+static void action_open_image(void);
+static void action_open_sound(void);
+static void action_open_anim(void);
+static void action_open_calib(void);
+static void action_open_keyboard(void);
+
+static void draw_btn_0(bool focused);
+static void draw_btn_1(bool focused);
+static void draw_btn_2(bool focused);
+static void draw_btn_3(bool focused);
+static void draw_btn_4(bool focused);
+static void draw_btn_5(bool focused);
+
+// ---------------------------------------------------------------------------
+// Main menu — 6 items, 3 columns
+// ---------------------------------------------------------------------------
+// Grid layout (3×2):
+//   [0 IMAGE ][1 SOUND][2 ANIM ]
+//   [3 CALIB ][4 KEYS ][5 ---  ]
+static MenuItem_t main_items[6] = {
+    { { BTN_X(0), BTN_Y(0), BTN_W, BTN_H, NULL, BUTTON_NORMAL   }, action_open_image,    draw_btn_0 },
+    { { BTN_X(1), BTN_Y(0), BTN_W, BTN_H, NULL, BUTTON_NORMAL   }, action_open_sound,    draw_btn_1 },
+    { { BTN_X(2), BTN_Y(0), BTN_W, BTN_H, NULL, BUTTON_NORMAL   }, action_open_anim,     draw_btn_2 },
+    { { BTN_X(0), BTN_Y(1), BTN_W, BTN_H, NULL, BUTTON_NORMAL   }, action_open_calib,    draw_btn_3 },
+    { { BTN_X(1), BTN_Y(1), BTN_W, BTN_H, NULL, BUTTON_NORMAL   }, action_open_keyboard, draw_btn_4 },
+    { { BTN_X(2), BTN_Y(1), BTN_W, BTN_H, NULL, BUTTON_DISABLED }, NULL,                 draw_btn_5 },
 };
 
-static const Scene_t scenes[MENU_COUNT] = {
-    { SceneImage_OnEnter,    SceneImage_OnUpdate,    SceneImage_OnExit    },
-    { SceneAnim_OnEnter,     SceneAnim_OnUpdate,     SceneAnim_OnExit     },
-    { SceneKeyboard_OnEnter, SceneKeyboard_OnUpdate, SceneKeyboard_OnExit },
-    { SceneCalib_OnEnter,    SceneCalib_OnUpdate,    SceneCalib_OnExit    },
-    { NULL, NULL, NULL },
-    { NULL, NULL, NULL },
+static Menu_t main_menu = {
+    .items   = main_items,
+    .count   = 6,
+    .cols    = MENU_COLS,
+    .focused = 0,
+    .parent  = NULL,
+};
+
+// ---------------------------------------------------------------------------
+// Scene table — indexed by main_items slot
+// ---------------------------------------------------------------------------
+static const Scene_t scenes[6] = {
+    { SceneImage_OnEnter,    SceneImage_OnUpdate,    SceneImage_OnExit    }, // 0 IMAGE
+    { SceneAnim_OnEnter,     SceneAnim_OnUpdate,     SceneAnim_OnExit     }, // 1 SOUND  (uses anim scene — stub)
+    { SceneAnim_OnEnter,     SceneAnim_OnUpdate,     SceneAnim_OnExit     }, // 2 ANIM
+    { SceneCalib_OnEnter,    SceneCalib_OnUpdate,    SceneCalib_OnExit    }, // 3 CALIB
+    { SceneKeyboard_OnEnter, SceneKeyboard_OnUpdate, SceneKeyboard_OnExit }, // 4 KEYS
+    { NULL, NULL, NULL },                                                     // 5 ---
 };
 
 // ---------------------------------------------------------------------------
 // Runtime state
 // ---------------------------------------------------------------------------
-static int8_t          focused_idx    = 0;     // 0-5, currently highlighted
-static const Scene_t  *current_scene  = NULL;  // NULL = menu visible
+static int8_t active_scene_index = -1;
+static bool   exit_requested     = false;
 
 // ---------------------------------------------------------------------------
-// Internal helpers
+// Icon button renderer — shared by all 6 draw functions
 // ---------------------------------------------------------------------------
-
-static void menu_draw_all(void)
+static void menu_draw_btn(uint8_t idx, uint8_t img_slot,
+                           bool enabled, const char *label, bool focused)
 {
+    int16_t bx = main_items[idx].button.x;
+    int16_t by = main_items[idx].button.y;
+
+    // Background
+    uint16_t bg = enabled ? 0x2104u : 0x18C3u;
+    GUI_FillRectColor((uint16_t)bx,        (uint16_t)by,
+                      (uint16_t)(bx+BTN_W), (uint16_t)(by+BTN_H), bg);
+
+    // Border / focus ring
+    if (focused) {
+        uint16_t c = 0x07FFu;   // cyan — 2px ring
+        GUI_FillRectColor((uint16_t)bx,         (uint16_t)by,          (uint16_t)(bx+BTN_W),   (uint16_t)(by+2),      c);
+        GUI_FillRectColor((uint16_t)bx,         (uint16_t)(by+BTN_H-2),(uint16_t)(bx+BTN_W),   (uint16_t)(by+BTN_H),  c);
+        GUI_FillRectColor((uint16_t)bx,         (uint16_t)by,          (uint16_t)(bx+2),        (uint16_t)(by+BTN_H),  c);
+        GUI_FillRectColor((uint16_t)(bx+BTN_W-2),(uint16_t)by,         (uint16_t)(bx+BTN_W),   (uint16_t)(by+BTN_H),  c);
+    } else {
+        uint16_t c = 0x4228u;   // subtle — 1px border
+        GUI_FillRectColor((uint16_t)bx,         (uint16_t)by,          (uint16_t)(bx+BTN_W),   (uint16_t)(by+1),      c);
+        GUI_FillRectColor((uint16_t)bx,         (uint16_t)(by+BTN_H-1),(uint16_t)(bx+BTN_W),   (uint16_t)(by+BTN_H),  c);
+        GUI_FillRectColor((uint16_t)bx,         (uint16_t)by,          (uint16_t)(bx+1),        (uint16_t)(by+BTN_H),  c);
+        GUI_FillRectColor((uint16_t)(bx+BTN_W-1),(uint16_t)by,         (uint16_t)(bx+BTN_W),   (uint16_t)(by+BTN_H),  c);
+    }
+
+    // Icon
+    int16_t img_x = bx + ICON_X_OFF;
+    int16_t img_y = by + ICON_Y_OFF;
+
+    if (enabled)
+        ImgDraw_FromFlash(img_slot, img_x, img_y);
+    else
+        ImgDraw_Cross(img_x, img_y, 0x18C3u);
+
+    // Label — embedded font scale=1 (8px), centered in bottom area
+    int16_t lbl_y0 = by + LABEL_Y_OFF;
+    int16_t lbl_y1 = by + BTN_H;
+    uint16_t lbl_c = enabled ? WHITE : 0x528Au;
+    Font_DrawStringCentered(bx, lbl_y0, bx + BTN_W, lbl_y1, label, 1, lbl_c);
+}
+
+static void draw_btn_0(bool f) { menu_draw_btn(0, RES_IMG_PICTURE,     true,  "IMAGE", f); }
+static void draw_btn_1(bool f) { menu_draw_btn(1, RES_IMG_SOUND,       true,  "SOUND", f); }
+static void draw_btn_2(bool f) { menu_draw_btn(2, RES_IMG_ANIMATION,   true,  "ANIM",  f); }
+static void draw_btn_3(bool f) { menu_draw_btn(3, RES_IMG_CALIBRATION, true,  "CALIB", f); }
+static void draw_btn_4(bool f) { menu_draw_btn(4, RES_IMG_KEYBOARD,    true,  "KEYS",  f); } // keyboard.bmp absent → auto fallback
+static void draw_btn_5(bool f) { menu_draw_btn(5, RES_IMG_UNDEF,       false, "---",   f); }
+
+// ---------------------------------------------------------------------------
+// Scene transitions
+// ---------------------------------------------------------------------------
+static void enter_scene(int8_t index)
+{
+    if (index < 0 || index >= 6) return;
+    if (!scenes[index].on_enter) return;
+
+    active_scene_index = index;
+    exit_requested     = false;
+    scenes[index].on_enter();
+}
+
+static void exit_scene(void)
+{
+    if (active_scene_index >= 0 && scenes[active_scene_index].on_exit)
+        scenes[active_scene_index].on_exit();
+
+    active_scene_index = -1;
+    exit_requested     = false;
+
+    main_items[main_menu.focused].button.state = BUTTON_FOCUSED;
     GUI_Clear(BLACK);
-    for (int i = 0; i < MENU_COUNT; i++)
-        Button_Draw(&buttons[i]);
+    Menu_Draw(&main_menu);
 }
 
-static void set_focus(int8_t idx)
-{
-    // unfocus previous
-    if (buttons[focused_idx].state == BTN_FOCUSED)
-        buttons[focused_idx].state = BTN_NORMAL;
-
-    focused_idx = idx;
-
-    if (buttons[focused_idx].state != BTN_DISABLED)
-        buttons[focused_idx].state = BTN_FOCUSED;
-
-    // redraw both affected buttons
-    Button_Draw(&buttons[idx]);
-    // previous was already set to NORMAL above — redraw it too
-    // (we can't know old idx here so we redraw all; cheap on this HW)
-    menu_draw_all();
-}
-
-static void enter_scene(int8_t idx)
-{
-    if (scenes[idx].on_enter == NULL) return;   // disabled slot
-    current_scene = &scenes[idx];
-    current_scene->on_enter();
-}
+static void action_open_image(void)    { enter_scene(0); }
+static void action_open_sound(void)    { enter_scene(1); }
+static void action_open_anim(void)     { enter_scene(2); }
+static void action_open_calib(void)    { enter_scene(3); }
+static void action_open_keyboard(void) { enter_scene(4); }
 
 // ---------------------------------------------------------------------------
-// Menu navigation helpers
+// Public API
 // ---------------------------------------------------------------------------
 
-static int8_t nav_move(int8_t idx, NavEvent_t ev)
+void DemoApp_RequestExit(void)
 {
-    int8_t col = idx % MENU_COLS;
-    int8_t row = idx / MENU_COLS;
-
-    switch (ev) {
-        case NAV_RIGHT: col = (col + 1) % MENU_COLS;            break;
-        case NAV_LEFT:  col = (col + MENU_COLS - 1) % MENU_COLS; break;
-        case NAV_DOWN:  row = (row + 1) % MENU_ROWS;            break;
-        case NAV_UP:    row = (row + MENU_ROWS - 1) % MENU_ROWS; break;
-        default: return idx;
-    }
-    int8_t next = (int8_t)(row * MENU_COLS + col);
-    // Skip disabled slots — keep current position
-    if (buttons[next].state == BTN_DISABLED) return idx;
-    return next;
+    exit_requested = true;
 }
-
-static void handle_menu_event(NavEvent_t ev)
-{
-    switch (ev) {
-        case NAV_LEFT:
-        case NAV_RIGHT:
-        case NAV_UP:
-        case NAV_DOWN: {
-            int8_t next = nav_move(focused_idx, ev);
-            if (next != focused_idx)
-                set_focus(next);
-            break;
-        }
-        case NAV_CONFIRM:
-            if (buttons[focused_idx].state != BTN_DISABLED) {
-                buttons[focused_idx].state = BTN_PRESSED;
-                Button_Draw(&buttons[focused_idx]);
-                enter_scene(focused_idx);
-            }
-            break;
-
-        case NAV_TOUCH: {
-            int16_t tx, ty;
-            Nav_GetTouchPos(&tx, &ty);
-            for (int i = 0; i < MENU_COUNT; i++) {
-                if (buttons[i].state != BTN_DISABLED &&
-                    Button_HitTest(&buttons[i], tx, ty)) {
-                    set_focus((int8_t)i);
-                    buttons[i].state = BTN_PRESSED;
-                    Button_Draw(&buttons[i]);
-                    enter_scene((int8_t)i);
-                    break;
-                }
-            }
-            break;
-        }
-        default: break;
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Public entry point
-// ---------------------------------------------------------------------------
 
 void DemoApp_Run(void)
 {
-    // Load saved calibration from W25Q64; apply defaults if none found
-    Settings_t cfg;
-    if (Settings_Load(&cfg))
-        Nav_SetCalibration(cfg.touch_x_min, cfg.touch_x_max,
-                           cfg.touch_y_min, cfg.touch_y_max);
-
-    Nav_Init();
+    Navigation_Init();
     Keyboard_Init();
 
-    // Initial focus on button 0
-    buttons[focused_idx].state = BTN_FOCUSED;
-    menu_draw_all();
+    // Load saved touch calibration (safe: returns defaults if flash empty)
+    Settings_t cfg;
+    if (Settings_Load(&cfg))
+        Navigation_SetTouchCalibration(cfg.touch_x_min, cfg.touch_x_max,
+                                       cfg.touch_y_min, cfg.touch_y_max);
+
+    // One-time resource installation from SD (skipped if already done)
+    ResInstaller_Run();
+
+    main_items[0].button.state = BUTTON_FOCUSED;
+    GUI_Clear(BLACK);
+    Menu_Draw(&main_menu);
 
     while (1) {
         Keyboard_Process();
-        uint32_t now = OS_GetTimeMs();
-        NavEvent_t ev = Nav_Poll();
+        uint32_t          now_ms = OS_GetTimeMs();
+        NavigationEvent_t event  = Navigation_Poll();
 
-        if (current_scene != NULL) {
-            // Inside a scene
-            current_scene->on_update(now);
+        if (active_scene_index >= 0) {
+            bool consumed = scenes[active_scene_index].on_update(now_ms, event);
 
-            if (ev == NAV_BACK) {
-                current_scene->on_exit();
-                current_scene = NULL;
-                // Restore menu: reset pressed button to focused
-                buttons[focused_idx].state = BTN_FOCUSED;
-                menu_draw_all();
-            }
+            if (exit_requested || (event == NAVIGATION_BACK && !consumed))
+                exit_scene();
         } else {
-            // In menu
-            handle_menu_event(ev);
+            MenuResult_t result = Menu_HandleEvent(&main_menu, event);
+            (void)result;
         }
     }
 }

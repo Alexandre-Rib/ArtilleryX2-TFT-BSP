@@ -1,9 +1,9 @@
 /**
  * @file    ui_nav.c
- * @brief   Unified navigation input — keyboard + touch → abstract events
- * @version 1.0
+ * @brief   Navigation input — keyboard and touch events abstracted into a single stream
+ * @version 2.0
  * @date    Created:       2026-05-29
- *          Last modified: 2026-05-29
+ *          Last modified: 2026-05-30
  * @note    Developed with Claude Sonnet 4.6 (Anthropic)
  */
 
@@ -17,32 +17,33 @@
 // ---------------------------------------------------------------------------
 // Keyboard auto-repeat timing
 // ---------------------------------------------------------------------------
-#define REPEAT_DELAY_MS  400u   // hold duration before first repeat fires
+#define REPEAT_DELAY_MS  400u   // hold duration before the first repeat fires
 #define REPEAT_RATE_MS   120u   // interval between subsequent repeats
 
 // ---------------------------------------------------------------------------
-// Touch orientation — adjust these three flags to match your panel mounting.
+// Touch orientation — adjust these three flags to match the panel mounting.
 //   TOUCH_SWAP_XY : 1 = ADC channels 0xD0/0x90 are transposed vs screen axes
 //   TOUCH_FLIP_X  : 1 = screen X increases as raw X decreases
 //   TOUCH_FLIP_Y  : 1 = screen Y increases as raw Y decreases
-// Try SWAP=1,FLIP_X=1,FLIP_Y=1 first. If one axis is still mirrored, clear
-// its FLIP flag. If both are correct but swapped, toggle SWAP.
 // ---------------------------------------------------------------------------
-#define TOUCH_SWAP_XY  1   // 0xD0=physical vertical, 0x90=physical horizontal
+#define TOUCH_SWAP_XY  1
 #define TOUCH_FLIP_X   0
-#define TOUCH_FLIP_Y   1   // vertical axis: ADC increases going UP
+#define TOUCH_FLIP_Y   1
 
-// XPT2046 measurement commands (do not change)
 #define TOUCH_X_CMD  0xD0
 #define TOUCH_Y_CMD  0x90
 
+// ---------------------------------------------------------------------------
+// Default touch calibration (compile-time fallback)
+// Override at runtime with Navigation_SetTouchCalibration() after Settings_Load()
+// ---------------------------------------------------------------------------
 static uint16_t cal_x_min = 200u;
 static uint16_t cal_x_max = 3900u;
 static uint16_t cal_y_min = 200u;
 static uint16_t cal_y_max = 3900u;
 
 // ---------------------------------------------------------------------------
-// Module state
+// Internal state
 // ---------------------------------------------------------------------------
 static uint8_t  kb_prev_key     = 0;
 static uint32_t kb_key_time     = 0;
@@ -56,127 +57,153 @@ static int16_t  touch_last_y    = 0;
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-static NavEvent_t keycode_to_nav(uint8_t key)
+/**
+ * @brief  Map a USB HID keycode to the corresponding NavigationEvent_t.
+ *
+ * Returns NAVIGATION_NONE for any key that has no navigation mapping
+ * (printable characters, function keys, etc.).
+ *
+ * @param[in] keycode  USB HID keycode from Keyboard_GetKeycode().
+ * @return Corresponding navigation event, or NAVIGATION_NONE.
+ */
+static NavigationEvent_t keycode_to_navigation_event(uint8_t keycode)
 {
-    switch (key) {
-        case KB_KEY_LEFT:      return NAV_LEFT;
-        case KB_KEY_RIGHT:     return NAV_RIGHT;
-        case KB_KEY_UP:        return NAV_UP;
-        case KB_KEY_DOWN:      return NAV_DOWN;
-        case KB_KEY_ENTER:     return NAV_CONFIRM;
-        case KB_KEY_ESCAPE:    return NAV_BACK;
-        default:               return NAV_NONE;
+    switch (keycode) {
+        case KB_KEY_LEFT:  return NAVIGATION_LEFT;
+        case KB_KEY_RIGHT: return NAVIGATION_RIGHT;
+        case KB_KEY_UP:    return NAVIGATION_UP;
+        case KB_KEY_DOWN:  return NAVIGATION_DOWN;
+        case KB_KEY_ENTER: return NAVIGATION_CONFIRM;
+        case KB_KEY_ESCAPE:return NAVIGATION_BACK;
+        default:           return NAVIGATION_NONE;
     }
 }
 
-static int16_t clamp16(int32_t v, int16_t lo, int16_t hi)
+/**
+ * @brief  Clamp a 32-bit value to the [lo, hi] range and cast to int16_t.
+ */
+static int16_t clamp_to_screen(int32_t value, int16_t lo, int16_t hi)
 {
-    if (v < lo) return lo;
-    if (v > hi) return hi;
-    return (int16_t)v;
+    if (value < lo) return lo;
+    if (value > hi) return hi;
+    return (int16_t)value;
 }
 
+/**
+ * @brief  Convert a raw ADC X reading to a screen X coordinate.
+ */
 static int16_t touch_raw_to_screen_x(uint16_t raw)
 {
     if (raw < cal_x_min) raw = cal_x_min;
     if (raw > cal_x_max) raw = cal_x_max;
 #if TOUCH_FLIP_X
-    int32_t px = (int32_t)(cal_x_max - raw) * LCD_WIDTH
-                 / (int32_t)(cal_x_max - cal_x_min);
+    int32_t pixel = (int32_t)(cal_x_max - raw) * LCD_WIDTH
+                    / (int32_t)(cal_x_max - cal_x_min);
 #else
-    int32_t px = (int32_t)(raw - cal_x_min) * LCD_WIDTH
-                 / (int32_t)(cal_x_max - cal_x_min);
+    int32_t pixel = (int32_t)(raw - cal_x_min) * LCD_WIDTH
+                    / (int32_t)(cal_x_max - cal_x_min);
 #endif
-    return clamp16(px, 0, LCD_WIDTH - 1);
+    return clamp_to_screen(pixel, 0, LCD_WIDTH - 1);
 }
 
+/**
+ * @brief  Convert a raw ADC Y reading to a screen Y coordinate.
+ */
 static int16_t touch_raw_to_screen_y(uint16_t raw)
 {
     if (raw < cal_y_min) raw = cal_y_min;
     if (raw > cal_y_max) raw = cal_y_max;
 #if TOUCH_FLIP_Y
-    int32_t py = (int32_t)(cal_y_max - raw) * LCD_HEIGHT
-                 / (int32_t)(cal_y_max - cal_y_min);
+    int32_t pixel = (int32_t)(cal_y_max - raw) * LCD_HEIGHT
+                    / (int32_t)(cal_y_max - cal_y_min);
 #else
-    int32_t py = (int32_t)(raw - cal_y_min) * LCD_HEIGHT
-                 / (int32_t)(cal_y_max - cal_y_min);
+    int32_t pixel = (int32_t)(raw - cal_y_min) * LCD_HEIGHT
+                    / (int32_t)(cal_y_max - cal_y_min);
 #endif
-    return clamp16(py, 0, LCD_HEIGHT - 1);
+    return clamp_to_screen(pixel, 0, LCD_HEIGHT - 1);
 }
 
-static NavEvent_t poll_keyboard(uint32_t now)
+/**
+ * @brief  Poll the keyboard for the next navigation event, with auto-repeat.
+ *
+ * @param[in] now_ms  Current timestamp from OS_GetTimeMs().
+ * @return Navigation event, or NAVIGATION_NONE if nothing happened.
+ */
+static NavigationEvent_t poll_keyboard(uint32_t now_ms)
 {
-    uint8_t key = Keyboard_GetKeycode();
+    uint8_t keycode = Keyboard_GetKeycode();
 
-    if (key == 0) {
-        // All keys released
+    if (keycode == 0) {
         kb_prev_key     = 0;
         kb_repeat_armed = false;
-        return NAV_NONE;
+        return NAVIGATION_NONE;
     }
 
-    if (key != kb_prev_key) {
-        // New key pressed — immediate event, arm repeat timer
-        kb_prev_key     = key;
-        kb_key_time     = now;
+    if (keycode != kb_prev_key) {
+        // New key pressed — fire immediately and arm the repeat timer
+        kb_prev_key     = keycode;
+        kb_key_time     = now_ms;
         kb_repeat_armed = false;
-        return keycode_to_nav(key);
+        return keycode_to_navigation_event(keycode);
     }
 
-    // Same key held — first repeat after REPEAT_DELAY_MS
+    // Same key held — wait for REPEAT_DELAY_MS before the first repeat
     if (!kb_repeat_armed) {
-        if ((now - kb_key_time) >= REPEAT_DELAY_MS) {
+        if ((now_ms - kb_key_time) >= REPEAT_DELAY_MS) {
             kb_repeat_armed = true;
-            kb_key_time     = now;
-            return keycode_to_nav(key);
+            kb_key_time     = now_ms;
+            return keycode_to_navigation_event(keycode);
         }
-        return NAV_NONE;
+        return NAVIGATION_NONE;
     }
 
     // Subsequent repeats at REPEAT_RATE_MS
-    if ((now - kb_key_time) >= REPEAT_RATE_MS) {
-        kb_key_time = now;
-        return keycode_to_nav(key);
+    if ((now_ms - kb_key_time) >= REPEAT_RATE_MS) {
+        kb_key_time = now_ms;
+        return keycode_to_navigation_event(keycode);
     }
 
-    return NAV_NONE;
+    return NAVIGATION_NONE;
 }
 
-static NavEvent_t poll_touch(void)
+/**
+ * @brief  Poll the touch screen for a rising-edge tap event.
+ *
+ * @return NAVIGATION_TOUCH on a new tap; NAVIGATION_NONE otherwise.
+ */
+static NavigationEvent_t poll_touch(void)
 {
-    // XPT2046 TPEN is active-low: 0 = screen touched
-    bool pen = (XPT2046_Read_Pen() == 0);
+    bool pen_down = (XPT2046_Read_Pen() == 0);
 
-    if (pen && !touch_prev_pen) {
-        // Rising edge: new tap
-        uint16_t ra = XPT2046_Repeated_Compare_AD(TOUCH_X_CMD);
-        uint16_t rb = XPT2046_Repeated_Compare_AD(TOUCH_Y_CMD);
+    if (pen_down && !touch_prev_pen) {
+        // Rising edge: first frame the screen is touched
+        uint16_t raw_a = XPT2046_Repeated_Compare_AD(TOUCH_X_CMD);
+        uint16_t raw_b = XPT2046_Repeated_Compare_AD(TOUCH_Y_CMD);
 
-        if (ra != 0 && rb != 0) {
-            // Apply channel swap before axis mapping
+        if (raw_a != 0 && raw_b != 0) {
 #if TOUCH_SWAP_XY
-            touch_last_x  = touch_raw_to_screen_x(rb);
-            touch_last_y  = touch_raw_to_screen_y(ra);
+            touch_last_x = touch_raw_to_screen_x(raw_b);
+            touch_last_y = touch_raw_to_screen_y(raw_a);
 #else
-            touch_last_x  = touch_raw_to_screen_x(ra);
-            touch_last_y  = touch_raw_to_screen_y(rb);
+            touch_last_x = touch_raw_to_screen_x(raw_a);
+            touch_last_y = touch_raw_to_screen_y(raw_b);
 #endif
             touch_prev_pen = true;
-            return NAV_TOUCH;
+            return NAVIGATION_TOUCH;
         }
     }
 
-    if (!pen)
+    if (!pen_down)
         touch_prev_pen = false;
 
-    return NAV_NONE;
+    return NAVIGATION_NONE;
 }
 
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
 
-void Nav_Init(void)
+void Navigation_Init(void)
 {
     kb_prev_key     = 0;
     kb_key_time     = 0;
@@ -186,25 +213,25 @@ void Nav_Init(void)
     touch_last_y    = 0;
 }
 
-NavEvent_t Nav_Poll(void)
+NavigationEvent_t Navigation_Poll(void)
 {
-    uint32_t now = OS_GetTimeMs();
+    uint32_t now_ms = OS_GetTimeMs();
 
     // Keyboard takes priority over touch for navigation
-    NavEvent_t ev = poll_keyboard(now);
-    if (ev != NAV_NONE) return ev;
+    NavigationEvent_t event = poll_keyboard(now_ms);
+    if (event != NAVIGATION_NONE) return event;
 
     return poll_touch();
 }
 
-void Nav_GetTouchPos(int16_t *x, int16_t *y)
+void Navigation_GetTouchPosition(int16_t *x, int16_t *y)
 {
     if (x) *x = touch_last_x;
     if (y) *y = touch_last_y;
 }
 
-void Nav_SetCalibration(uint16_t x_min, uint16_t x_max,
-                        uint16_t y_min, uint16_t y_max)
+void Navigation_SetTouchCalibration(uint16_t x_min, uint16_t x_max,
+                                    uint16_t y_min, uint16_t y_max)
 {
     cal_x_min = x_min;
     cal_x_max = x_max;
@@ -212,8 +239,8 @@ void Nav_SetCalibration(uint16_t x_min, uint16_t x_max,
     cal_y_max = y_max;
 }
 
-void Nav_GetCalibration(uint16_t *x_min, uint16_t *x_max,
-                        uint16_t *y_min, uint16_t *y_max)
+void Navigation_GetTouchCalibration(uint16_t *x_min, uint16_t *x_max,
+                                    uint16_t *y_min, uint16_t *y_max)
 {
     if (x_min) *x_min = cal_x_min;
     if (x_max) *x_max = cal_x_max;
