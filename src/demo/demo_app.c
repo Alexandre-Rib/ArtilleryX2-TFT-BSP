@@ -177,7 +177,7 @@ static void draw_btn_0(bool f) { menu_draw_btn(0, RES_IMG_PICTURE,     true,  "I
 static void draw_btn_1(bool f) { menu_draw_btn(1, RES_IMG_SOUND,       true,  "SOUND", f); }
 static void draw_btn_2(bool f) { menu_draw_btn(2, RES_IMG_ANIMATION,   true,  "ANIM",  f); }
 static void draw_btn_3(bool f) { menu_draw_btn(3, RES_IMG_CALIBRATION, true,  "CALIB", f); }
-static void draw_btn_4(bool f) { menu_draw_btn(4, RES_IMG_KEYBOARD,    true,  "KEYS",  f); } // keyboard.bmp absent → auto fallback
+static void draw_btn_4(bool f) { menu_draw_btn(4, RES_IMG_KEYBOARD,    true,  "KEYS",  f); }
 static void draw_btn_5(bool f) { menu_draw_btn(5, RES_IMG_UNDEF,       false, "---",   f); }
 
 // ---------------------------------------------------------------------------
@@ -221,19 +221,48 @@ void DemoApp_RequestExit(void)
     exit_requested = true;
 }
 
+// Run the calibration scene in a blocking loop until the user saves or skips.
+static void run_calib_blocking(void)
+{
+    SceneCalib_OnEnter();
+    for (;;) {
+        Keyboard_Process();
+        NavigationEvent_t event  = Navigation_Poll();
+        bool              consumed = SceneCalib_OnUpdate(OS_GetTimeMs(), event);
+
+        Settings_t test;
+        if (Settings_Load(&test)) break;                     // saved — done
+
+        if (!consumed && event == NAVIGATION_BACK) break;    // ESC in LIVE = skip
+    }
+    SceneCalib_OnExit();
+}
+
 void DemoApp_Run(void)
 {
     Navigation_Init();
     Keyboard_Init();
 
-    // Load saved touch calibration (safe: returns defaults if flash empty)
+    // Install resources from SD if a fresh "res/" directory is present.
+    bool just_installed = ResInstaller_Run();
+
+    // Load or acquire touch calibration.
     Settings_t cfg;
-    if (Settings_Load(&cfg))
+    if (Settings_Load(&cfg)) {
         Navigation_SetTouchCalibration(cfg.touch_x_min, cfg.touch_x_max,
                                        cfg.touch_y_min, cfg.touch_y_max);
+    } else if (just_installed) {
+        // First install ever — no calibration in flash yet.
+        // Run calibration now so the result screen touch is accurate.
+        run_calib_blocking();
+        if (Settings_Load(&cfg))
+            Navigation_SetTouchCalibration(cfg.touch_x_min, cfg.touch_x_max,
+                                           cfg.touch_y_min, cfg.touch_y_max);
+    }
 
-    // One-time resource installation from SD (skipped if already done)
-    ResInstaller_Run();
+    // Show install result (blocks until screen press; skipped if all OK).
+    if (just_installed)
+        ResInstaller_ShowResult();
 
     main_items[0].button.state = BUTTON_FOCUSED;
     GUI_Clear(BLACK);

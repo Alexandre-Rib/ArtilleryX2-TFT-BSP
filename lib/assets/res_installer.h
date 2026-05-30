@@ -1,22 +1,25 @@
 /**
  * @file    res_installer.h
  * @brief   One-shot resource installer: SD /res/ → W25Q64
- * @version 1.0
+ * @version 2.1
  * @date    Created:       2026-05-30
- *          Last modified: 2026-05-30
+ *          Last modified: 2026-05-31
  * @note    Developed with Claude Sonnet 4.6 (Anthropic)
  *
- *  Runs once at startup.  If the magic word at RES_MAGIC_ADDR is absent,
- *  the installer mounts the SD card, looks for image files under /res/pic/,
- *  decodes them (PNG via pngle; raw RGB565 .bin as fallback), writes them
- *  to W25Q64, and stamps the magic word when done.
+ *  Trigger: presence of a "res/" directory at the root of the SD card.
+ *  ResInstaller_Run() copies BMP files from SD /res/pic/ to W25Q64, then
+ *  renames the SD directory to "res_cur/" so the installer skips on the
+ *  next boot.
  *
- *  If the SD card is absent or /res/pic/ is missing, the function returns
- *  immediately.  Subsequent boots with the magic present also skip the
- *  installer, so image display still works from cached flash data.
+ *  To reinstall: put a fresh "res/" directory on the SD (remove or rename
+ *  the existing "res_cur/" first if needed).
  *
- *  To force reinstall: erase the magic sector with an external tool, or
- *  reflash the W25Q64 region starting at RES_BASE_ADDR.
+ *  Typical startup sequence in demo_app:
+ *    bool installed = ResInstaller_Run();
+ *    if (installed) {
+ *        // optionally run calibration here if no settings saved
+ *        ResInstaller_ShowResult();   // blocks until screen press
+ *    }
  */
 
 #ifndef _RES_INSTALLER_H_
@@ -28,18 +31,31 @@
 /**
  * @brief  Run the resource installer.
  *
- * Checks whether resources are already installed (magic word present in
- * W25Q64).  If not, attempts to copy images from SD card to W25Q64.
- * Safe to call unconditionally at application startup.
+ * Mounts the SD card and checks for a "res/" directory at the root.
+ * If found, copies images from /res/pic/ to W25Q64 and renames the
+ * directory to "res_cur/".  Safe to call unconditionally at startup.
+ *
+ * @return true   An install was performed this boot.
+ * @return false  Nothing to install (no "res/" on SD, or SD absent).
  */
-void ResInstaller_Run(void);
+bool ResInstaller_Run(void);
+
+/**
+ * @brief  Show the install result screen and block until the screen is pressed.
+ *
+ * Reads slot status codes from the W25Q64 magic sector and displays only
+ * slots that are not OK (WAR_DIM, MISS, ERR_*).  If all slots are OK the
+ * function returns immediately.  Call after ResInstaller_Run() returned true
+ * and after touch calibration has been set up.
+ */
+void ResInstaller_ShowResult(void);
 
 /**
  * @brief  Return true if installation has been completed at least once.
  *
- * A true result only means the installer ran to completion; individual
- * slots may still be invalid (file not found).  Use ResInstaller_IsSlotValid()
- * to check a specific image.
+ * A true result means the magic word is present in W25Q64; individual
+ * slots may still be invalid.  Use ResInstaller_IsSlotValid() to check
+ * a specific image.
  */
 bool ResInstaller_IsInstalled(void);
 
