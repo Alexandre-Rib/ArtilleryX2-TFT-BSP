@@ -239,8 +239,109 @@ static void rmdir_recursive(const char *path)
 }
 
 // ---------------------------------------------------------------------------
+// Sound slot helpers
+// ---------------------------------------------------------------------------
+static void erase_snd_slot(uint8_t slot)
+{
+    FlashMap_EraseSector(RES_SND_ADDR(slot));   // one 4 KB sector
+}
+
+// Extract base name of a filename (no extension, uppercase, exactly 8 bytes zero-padded)
+static void extract_base_name(const char *fname, char out[8])
+{
+    memset(out, 0, 8u);
+    for (uint8_t i = 0; i < 8u && fname[i] != '.' && fname[i] != '\0'; i++) {
+        char c = fname[i];
+        if (c >= 'a' && c <= 'z') c = (char)(c - 32);
+        out[i] = c;
+    }
+}
+
+// True if the slot header matches the given 8-byte base name
+static bool slot_name_matches(uint8_t slot, const char base[8])
+{
+    char hdr[8];
+    FlashMap_Read(RES_SND_ADDR(slot), (uint8_t *)hdr, 8u);
+    if ((uint8_t)hdr[0] == 0xFFu) return false;   // empty slot
+    return memcmp(hdr, base, 8u) == 0;
+}
+
+// True if the slot has never been written (all 0xFF)
+static bool slot_is_empty(uint8_t slot)
+{
+    uint8_t first = 0;
+    FlashMap_Read(RES_SND_ADDR(slot), &first, 1u);
+    return first == 0xFFu;
+}
+
+static bool is_snd_file(const FILINFO *fno)
+{
+    if (fno->fattrib & AM_DIR) return false;
+    uint16_t len = (uint16_t)strlen(fno->fname);
+    if (len < 4u) return false;
+    const char *ext = fno->fname + len - 4u;
+    return ext[0] == '.' &&
+           (ext[1] == 's' || ext[1] == 'S') &&
+           (ext[2] == 'n' || ext[2] == 'N') &&
+           (ext[3] == 'd' || ext[3] == 'D');
+}
+
+static SlotStatus_t install_snd_slot(uint8_t slot, const char *fname)
+{
+    // Build path "0:/res/sound/<fname>"
+    char path[40];
+    memcpy(path, "0:/res/sound/", 13u);
+    strncpy(path + 13, fname, sizeof(path) - 14u);
+    path[sizeof(path) - 1u] = '\0';
+
+    FIL  fp;
+    UINT br;
+    if (f_open(&fp, path, FA_READ) != FR_OK) return SLOT_MISS;
+
+    s_base_addr   = RES_SND_ADDR(slot);
+    s_byte_offset = 0;
+    s_page_pos    = 0;
+
+    // 8-byte name header: filename without extension, uppercase, null-padded
+    char name_hdr[8] = {0};
+    uint8_t nlen = 0;
+    for (uint8_t j = 0; j < 8u && fname[j] != '.' && fname[j] != '\0'; j++) {
+        char c = fname[j];
+        if (c >= 'a' && c <= 'z') c = (char)(c - 32);
+        name_hdr[nlen++] = c;
+    }
+    for (uint8_t j = 0; j < 8u; j++) page_push((uint8_t)name_hdr[j]);
+
+    // Copy ToneNote_t records until EOF or end marker
+    bool has_data = false;
+    for (;;) {
+        uint8_t tmp[4];
+        if (f_read(&fp, tmp, 4u, &br) != FR_OK || br < 4u) break;
+        uint16_t freq = (uint16_t)(tmp[0] | ((uint16_t)tmp[1] << 8u));
+        if (freq == 0xFFFFu) break;
+        if (s_byte_offset + s_page_pos + 8u > RES_SND_SLOT_SIZE) break;
+        for (uint8_t j = 0; j < 4u; j++) page_push(tmp[j]);
+        has_data = true;
+    }
+    f_close(&fp);
+
+    page_push(0xFFu); page_push(0xFFu); page_push(0xFFu); page_push(0xFFu);
+    page_flush();
+
+    return has_data ? SLOT_OK : SLOT_MISS;
+}
+
+// ---------------------------------------------------------------------------
 // Progress display
 // ---------------------------------------------------------------------------
+static void show_label(const char *label)
+{
+    GUI_FillRectColor(0, (uint16_t)(LCD_HEIGHT/2 + 10),
+                      LCD_WIDTH, (uint16_t)(LCD_HEIGHT/2 + 26), BLACK);
+    Font_DrawStringCentered(0, LCD_HEIGHT/2 + 10, LCD_WIDTH, LCD_HEIGHT/2 + 26,
+                             label, 1, WHITE);
+}
+
 static void show_progress(uint8_t step)
 {
     int16_t bar_w = (int16_t)(((uint32_t)(step + 1u) * (uint32_t)LCD_WIDTH)
@@ -249,10 +350,7 @@ static void show_progress(uint8_t step)
                       (uint16_t)bar_w, (uint16_t)(LCD_HEIGHT/2 + 4), 0x07E0u);
     GUI_FillRectColor((uint16_t)bar_w, (uint16_t)(LCD_HEIGHT/2 - 4),
                       LCD_WIDTH, (uint16_t)(LCD_HEIGHT/2 + 4), 0x2104u);
-    GUI_FillRectColor(0, (uint16_t)(LCD_HEIGHT/2 + 10),
-                      LCD_WIDTH, (uint16_t)(LCD_HEIGHT/2 + 26), BLACK);
-    Font_DrawStringCentered(0, LCD_HEIGHT/2 + 10, LCD_WIDTH, LCD_HEIGHT/2 + 26,
-                             SLOT_LABELS[step], 1, WHITE);
+    show_label(SLOT_LABELS[step]);
 }
 
 // ---------------------------------------------------------------------------
@@ -401,6 +499,41 @@ bool ResInstaller_Run(void)
 
         erase_slot(i);
         valid_flags[i] = (uint8_t)install_slot(i);
+    }
+
+    // Sound slots -- incremental update: only overwrite slots whose name matches the file.
+    // New files occupy the first empty slot. Unmatched slots are left untouched.
+    // This preserves sounds that are not in the current res/sound/ directory.
+    {
+        DIR     dir_snd;
+        FILINFO fno_snd;
+
+        if (f_opendir(&dir_snd, "0:/res/sound") == FR_OK) {
+            while (1) {
+                if (f_readdir(&dir_snd, &fno_snd) != FR_OK || fno_snd.fname[0] == '\0') break;
+                if (!is_snd_file(&fno_snd)) continue;
+
+                char base[8];
+                extract_base_name(fno_snd.fname, base);
+
+                // Find target slot: prefer existing slot with same name, fallback to first empty
+                int8_t target    = -1;
+                int8_t first_emp = -1;
+                for (uint8_t s = 0; s < RES_SND_SLOT_COUNT; s++) {
+                    if (slot_name_matches(s, base)) { target = (int8_t)s; break; }
+                    if (first_emp < 0 && slot_is_empty(s)) first_emp = (int8_t)s;
+                }
+                if (target < 0) target = first_emp;
+                if (target < 0) continue;   // no room — skip
+                if (RES_SND_ADDR((uint8_t)target) + RES_SND_SLOT_SIZE > SETTINGS_ADDR) continue;
+
+                show_label(fno_snd.fname);
+                erase_snd_slot((uint8_t)target);
+                install_snd_slot((uint8_t)target, fno_snd.fname);
+            }
+            f_closedir(&dir_snd);
+        }
+        // Slots not touched by the loop keep their previous content.
     }
 
     // Write magic sector: [magic 4B LE][status[6] 6B] = 10 bytes

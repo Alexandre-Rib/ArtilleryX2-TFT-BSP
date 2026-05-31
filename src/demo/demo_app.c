@@ -34,6 +34,7 @@
 #include "settings.h"
 #include "scene_image.h"
 #include "scene_anim.h"
+#include "scene_sound.h"
 #include "scene_keyboard.h"
 #include "scene_calib.h"
 #include "keyboard.h"
@@ -115,7 +116,7 @@ static Menu_t main_menu = {
 // ---------------------------------------------------------------------------
 static const Scene_t scenes[6] = {
     { SceneImage_OnEnter,    SceneImage_OnUpdate,    SceneImage_OnExit    }, // 0 IMAGE
-    { SceneAnim_OnEnter,     SceneAnim_OnUpdate,     SceneAnim_OnExit     }, // 1 SOUND  (uses anim scene — stub)
+    { SceneSound_OnEnter,    SceneSound_OnUpdate,    SceneSound_OnExit    }, // 1 SOUND
     { SceneAnim_OnEnter,     SceneAnim_OnUpdate,     SceneAnim_OnExit     }, // 2 ANIM
     { SceneCalib_OnEnter,    SceneCalib_OnUpdate,    SceneCalib_OnExit    }, // 3 CALIB
     { SceneKeyboard_OnEnter, SceneKeyboard_OnUpdate, SceneKeyboard_OnExit }, // 4 KEYS
