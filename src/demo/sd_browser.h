@@ -87,6 +87,22 @@ const SdBrowItem_t *SdBrowser_GetItem(uint8_t idx);  ///< NULL if out of range
 int         SdBrowser_GetLastError(void);
 
 // ---------------------------------------------------------------------------
+// Hot-plug detection
+// ---------------------------------------------------------------------------
+
+/**
+ * @brief  Poll for SD card insertion / removal and update mount state.
+ *
+ * Must be called every main-loop iteration (internally throttled to 500 ms).
+ * On insertion  : mounts the card and scans the root directory.
+ * On removal    : unmounts the card, clears the item list, resets path.
+ *
+ * @param[in] now_ms  Current timestamp (OS_GetTimeMs()).
+ * @return true if the card state changed — caller should redraw the list.
+ */
+bool SdBrowser_Poll(uint32_t now_ms);
+
+// ---------------------------------------------------------------------------
 // Navigation  (automatically rescans after each move)
 // ---------------------------------------------------------------------------
 

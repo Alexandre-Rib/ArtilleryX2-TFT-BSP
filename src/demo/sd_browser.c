@@ -13,6 +13,7 @@
 
 #include "sd_browser.h"
 #include "ff.h"
+#include "sd.h"
 #include <string.h>
 
 // ---------------------------------------------------------------------------
@@ -24,6 +25,9 @@ static uint8_t              s_ext_count;
 static FATFS         s_fatfs;
 static bool          s_mounted;
 static int           s_last_error;
+
+static bool          s_cd_prev;        // card state at last poll
+static uint32_t      s_cd_next_ms;     // next time to check card detect
 
 static char          s_path[SDBROW_PATH_LEN];
 static SdBrowItem_t  s_items[SDBROW_MAX_ITEMS];
@@ -103,6 +107,18 @@ static void scan_dir(void)
         s_item_count++;
     }
     f_closedir(&dir);
+
+    // Sort: dirs before files.  PARENT at [0] is untouched.
+    // Insertion sort that bubbles each DIR to the front of the unsorted region.
+    uint8_t sorted = (s_item_count > 0u && s_items[0].type == SDBROW_ITEM_PARENT) ? 1u : 0u;
+    for (uint8_t i = sorted; i < s_item_count; i++) {
+        if (s_items[i].type == SDBROW_ITEM_DIR) {
+            SdBrowItem_t tmp = s_items[i];
+            for (uint8_t j = i; j > sorted; j--) s_items[j] = s_items[j - 1u];
+            s_items[sorted] = tmp;
+            sorted++;
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -110,11 +126,13 @@ static void scan_dir(void)
 // ---------------------------------------------------------------------------
 void SdBrowser_Init(const char * const *exts, uint8_t ext_count)
 {
-    s_exts       = exts;
-    s_ext_count  = ext_count;
-    s_mounted    = false;
-    s_last_error = 0;
-    s_item_count = 0;
+    s_exts        = exts;
+    s_ext_count   = ext_count;
+    s_mounted     = false;
+    s_last_error  = 0;
+    s_item_count  = 0;
+    s_cd_prev     = false;
+    s_cd_next_ms  = 0u;
     memcpy(s_path, "0:/", 4u);
 }
 
@@ -122,10 +140,13 @@ bool SdBrowser_Mount(void)
 {
     s_mounted = false;
     memcpy(s_path, "0:/", 4u);
-    if (f_mount(&s_fatfs, "0:/", 1) != FR_OK) return false;
-    s_mounted = true;
-    scan_dir();
-    return true;
+    if (f_mount(&s_fatfs, "0:/", 1) == FR_OK) {
+        s_mounted = true;
+        scan_dir();
+    }
+    // f_mount → disk_initialize → SD_Init → SD_SPI_Init: CD pin is now valid
+    s_cd_prev = (bool)SD_CD_Inserted();
+    return s_mounted;
 }
 
 void SdBrowser_Unmount(void)
@@ -192,5 +213,35 @@ bool SdBrowser_GetFilePath(uint8_t idx, char *out, uint16_t out_size)
     if (plen + nlen + 1u > out_size) return false;
     memcpy(out, s_path, plen);
     memcpy(out + plen, s_items[idx].name, nlen + 1u);
+    return true;
+}
+
+// ---------------------------------------------------------------------------
+// Hot-plug detection
+// ---------------------------------------------------------------------------
+#define CD_POLL_MS  500u
+
+bool SdBrowser_Poll(uint32_t now_ms)
+{
+    if (now_ms < s_cd_next_ms) return false;
+    s_cd_next_ms = now_ms + CD_POLL_MS;
+
+    bool inserted = (bool)SD_CD_Inserted();
+    if (inserted == s_cd_prev) return false;
+    s_cd_prev = inserted;
+
+    if (inserted) {
+        memcpy(s_path, "0:/", 4u);
+        s_mounted = false;
+        if (f_mount(&s_fatfs, "0:/", 1) == FR_OK) {
+            s_mounted = true;
+            scan_dir();
+        }
+    } else {
+        f_mount(NULL, "0:/", 0);
+        s_mounted    = false;
+        s_item_count = 0;
+        memcpy(s_path, "0:/", 4u);
+    }
     return true;
 }

@@ -578,6 +578,14 @@ bool SceneSound_OnUpdate(uint32_t now_ms, NavigationEvent_t event)
 {
     playback_tick(now_ms);
 
+    // Hot-plug: detect SD insertion/removal regardless of user input
+    if (s_source == SOURCE_SD && SdBrowser_Poll(now_ms)) {
+        if (s_play.active) playback_stop();
+        s_selected = -1;
+        s_scroll   = 0;
+        draw_list(); draw_status(); draw_footer();
+    }
+
     if (event == NAVIGATION_TOUCH) {
         int16_t tx, ty;
         Navigation_GetTouchPosition(&tx, &ty);
