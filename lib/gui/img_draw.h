@@ -14,16 +14,28 @@
 #include <stdint.h>
 
 /**
- * @brief  Render a menu image from W25Q64 to the LCD.
+ * @brief  Render a menu image from W25Q64 by name.
  *
- * Reads RES_IMG_W × RES_IMG_H pixels stored as raw RGB565 big-endian at
- * RES_IMG_ADDR(slot) and pushes them to the display via LCD_SetWindow +
- * LCD_WR_16BITS_DATA.
+ * Scans all installed image slots for a matching name (case-insensitive).
+ * Fallback chain:
+ *   1. Slot found by name           → display it
+ *   2. "undef_menu" slot found      → display generic placeholder
+ *   3. Neither found                → ImgDraw_Cross (dark cross)
  *
- * If the slot is not valid (ResInstaller_IsSlotValid() returns false),
- * ImgDraw_Cross() is drawn instead.
+ * @param[in] name  Image name (e.g. "keyboard", "joystick") — case-insensitive.
+ * @param[in] x     Top-left X on screen.
+ * @param[in] y     Top-left Y on screen.
+ */
+void ImgDraw_ByName(const char *name, int16_t x, int16_t y);
+
+/**
+ * @brief  Render a menu image from W25Q64 by direct slot index.
  *
- * @param[in] slot  Image slot index (RES_IMG_PICTURE … RES_IMG_UNDEF).
+ * Reads pixels from RES_IMG_PIX_ADDR(slot).  Use this only when the slot
+ * index is already known (e.g. the flash image browser in scene_image).
+ * For menus, prefer ImgDraw_ByName().
+ *
+ * @param[in] slot  Slot index (0 … RES_IMG_MAX_SLOTS-1).
  * @param[in] x     Top-left X on screen.
  * @param[in] y     Top-left Y on screen.
  */

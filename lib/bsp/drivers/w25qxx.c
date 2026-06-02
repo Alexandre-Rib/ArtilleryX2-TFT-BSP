@@ -48,7 +48,8 @@ void W25Qxx_WriteEnable(void)
 // waiting for W25Qxx to be idle
 void W25Qxx_WaitForWriteEnd(void)
 {
-  uint8_t flashstatus = 0;
+  uint8_t  flashstatus = 0;
+  uint32_t count       = 0;
 
   W25Qxx_SPI_CS_Set(0);
   W25Qxx_SPI_Read_Write_Byte(CMD_READ_REGISTER1);
@@ -56,6 +57,15 @@ void W25Qxx_WaitForWriteEnd(void)
   do
   {
     flashstatus = W25Qxx_SPI_Read_Write_Byte(W25QXX_DUMMY_BYTE);
+    // Sector erase can take up to 400 ms.  Service USB every ~10 ms so the
+    // OTG FS RX FIFO does not overflow and the keyboard stays connected.
+    if (++count >= 10000u && BSP_YieldHook) {
+      W25Qxx_SPI_CS_Set(1);   // release SPI bus before yielding
+      BSP_YieldHook();
+      W25Qxx_SPI_CS_Set(0);   // re-assert for next status read
+      W25Qxx_SPI_Read_Write_Byte(CMD_READ_REGISTER1);
+      count = 0;
+    }
   }
   while ((flashstatus & 0x01) == SET);
 

@@ -4,6 +4,7 @@
 
 #include "GPIO_Init.h"
 #include "spi.h"
+#include "mks_tft28.h"  // BSP_YieldHook
 
 // SDCard type definition
 #define SD_TYPE_ERR  0X00
@@ -155,6 +156,10 @@ uint8_t SD_Wait_Ready(void)
       return 0;  // OK
 
     t++;
+    // SD card worst-case busy: several seconds.  Yield every ~10 000 SPI bytes
+    // to keep the USB HID FIFO drained and the keyboard alive.
+    if ((t % 10000u) == 0u && BSP_YieldHook)
+      BSP_YieldHook();
   } while (t < 0XFFFFFF);  // wait
 
   return 1;

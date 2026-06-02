@@ -1,4 +1,6 @@
 #include "mks_tft28.h"
+
+BSP_YieldFn_t BSP_YieldHook = (BSP_YieldFn_t)0;
 #include "delay.h"
 #include "os_timer.h"
 #include "w25qxx.h"

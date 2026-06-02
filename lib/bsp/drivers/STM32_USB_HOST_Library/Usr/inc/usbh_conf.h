@@ -38,7 +38,7 @@
 
 #define USBH_MAX_NUM_ENDPOINTS                3  /* 1 bulk IN + 1 bulk Out */
                                                  /* + 1 additional interrupt IN* needed for some keys*/
-#define USBH_MAX_NUM_INTERFACES               2
+#define USBH_MAX_NUM_INTERFACES               3  /* 3 needed for CDC+HID composite (Arduino Micro) */
 #define USBH_MSC_MAX_LUNS                     5  /* Up to 5 LUNs to be supported */
 #ifdef USE_USB_OTG_FS
 #define USBH_MSC_MPS_SIZE                 0x40

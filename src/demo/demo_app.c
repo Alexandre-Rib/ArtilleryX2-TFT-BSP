@@ -35,9 +35,11 @@
 #include "scene_image.h"
 #include "scene_anim.h"
 #include "scene_sound.h"
-#include "scene_keyboard.h"
+#include "scene_controllers.h"
 #include "scene_calib.h"
 #include "keyboard.h"
+#include "mega9.h"
+#include "mks_tft28.h"
 #include "GUI.h"
 #include "LCD_Colors.h"
 #include "os_timer.h"
@@ -119,7 +121,7 @@ static const Scene_t scenes[6] = {
     { SceneSound_OnEnter,    SceneSound_OnUpdate,    SceneSound_OnExit    }, // 1 SOUND
     { SceneAnim_OnEnter,     SceneAnim_OnUpdate,     SceneAnim_OnExit     }, // 2 ANIM
     { SceneCalib_OnEnter,    SceneCalib_OnUpdate,    SceneCalib_OnExit    }, // 3 CALIB
-    { SceneKeyboard_OnEnter, SceneKeyboard_OnUpdate, SceneKeyboard_OnExit }, // 4 KEYS
+    { SceneControllers_OnEnter, SceneControllers_OnUpdate, SceneControllers_OnExit }, // 4 CTRL
     { NULL, NULL, NULL },                                                     // 5 ---
 };
 
@@ -132,7 +134,7 @@ static bool   exit_requested     = false;
 // ---------------------------------------------------------------------------
 // Icon button renderer — shared by all 6 draw functions
 // ---------------------------------------------------------------------------
-static void menu_draw_btn(uint8_t idx, uint8_t img_slot,
+static void menu_draw_btn(uint8_t idx, const char *img_name,
                            bool enabled, const char *label, bool focused)
 {
     int16_t bx = main_items[idx].button.x;
@@ -158,14 +160,10 @@ static void menu_draw_btn(uint8_t idx, uint8_t img_slot,
         GUI_FillRectColor((uint16_t)(bx+BTN_W-1),(uint16_t)by,         (uint16_t)(bx+BTN_W),   (uint16_t)(by+BTN_H),  c);
     }
 
-    // Icon
+    // Icon — chaîne complète : nom → undef_menu → croix noire
     int16_t img_x = bx + ICON_X_OFF;
     int16_t img_y = by + ICON_Y_OFF;
-
-    if (enabled)
-        ImgDraw_FromFlash(img_slot, img_x, img_y);
-    else
-        ImgDraw_Cross(img_x, img_y, 0x18C3u);
+    ImgDraw_ByName(img_name, img_x, img_y);
 
     // Label — embedded font scale=1 (8px), centered in bottom area
     int16_t lbl_y0 = by + LABEL_Y_OFF;
@@ -174,12 +172,12 @@ static void menu_draw_btn(uint8_t idx, uint8_t img_slot,
     Font_DrawStringCentered(bx, lbl_y0, bx + BTN_W, lbl_y1, label, 1, lbl_c);
 }
 
-static void draw_btn_0(bool f) { menu_draw_btn(0, RES_IMG_PICTURE,     true,  "IMAGE", f); }
-static void draw_btn_1(bool f) { menu_draw_btn(1, RES_IMG_SOUND,       true,  "SOUND", f); }
-static void draw_btn_2(bool f) { menu_draw_btn(2, RES_IMG_ANIMATION,   true,  "ANIM",  f); }
-static void draw_btn_3(bool f) { menu_draw_btn(3, RES_IMG_CALIBRATION, true,  "CALIB", f); }
-static void draw_btn_4(bool f) { menu_draw_btn(4, RES_IMG_KEYBOARD,    true,  "KEYS",  f); }
-static void draw_btn_5(bool f) { menu_draw_btn(5, RES_IMG_UNDEF,       false, "---",   f); }
+static void draw_btn_0(bool f) { menu_draw_btn(0, "picture",         true,  "IMAGE", f); }
+static void draw_btn_1(bool f) { menu_draw_btn(1, "sound",           true,  "SOUND", f); }
+static void draw_btn_2(bool f) { menu_draw_btn(2, "animation",       true,  "ANIM",  f); }
+static void draw_btn_3(bool f) { menu_draw_btn(3, "calibration",     true,  "CALIB", f); }
+static void draw_btn_4(bool f) { menu_draw_btn(4, "general_control", true,  "CTRL",  f); }
+static void draw_btn_5(bool f) { menu_draw_btn(5, "undef_menu",      false, "---",   f); }
 
 // ---------------------------------------------------------------------------
 // Scene transitions
@@ -217,10 +215,9 @@ static void action_open_keyboard(void) { enter_scene(4); }
 // Public API
 // ---------------------------------------------------------------------------
 
-void DemoApp_RequestExit(void)
-{
-    exit_requested = true;
-}
+void DemoApp_RequestExit(void)   { exit_requested = true;  }
+bool DemoApp_IsExitRequested(void) { return exit_requested;  }
+void DemoApp_CancelExit(void)    { exit_requested = false; }
 
 // Run the calibration scene in a blocking loop until the user saves or skips.
 static void run_calib_blocking(void)
@@ -239,10 +236,20 @@ static void run_calib_blocking(void)
     SceneCalib_OnExit();
 }
 
+// Combined yield : appelé depuis les boucles bloquantes BSP (SD, flash).
+// Maintient vivants le stack USB HID et le driver MEGA9 pendant les opérations longues.
+static void yield_all(void)
+{
+    Keyboard_Process();
+    Mega9_Process();
+}
+
 void DemoApp_Run(void)
 {
+    Mega9_Init();
     Navigation_Init();
     Keyboard_Init();
+    BSP_YieldHook = yield_all;
 
     // Install resources from SD if a fresh "res/" directory is present.
     bool just_installed = ResInstaller_Run();
@@ -271,6 +278,7 @@ void DemoApp_Run(void)
 
     while (1) {
         Keyboard_Process();
+        Mega9_Process();
         uint32_t          now_ms = OS_GetTimeMs();
         NavigationEvent_t event  = Navigation_Poll();
 

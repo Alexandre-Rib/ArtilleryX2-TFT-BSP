@@ -60,10 +60,25 @@ void ResInstaller_ShowResult(void);
 bool ResInstaller_IsInstalled(void);
 
 /**
- * @brief  Return true if image slot @p slot was successfully written.
+ * @brief  Return true if image slot @p slot contains a valid installed image.
  *
- * @param[in] slot  Slot index (0 … RES_IMG_SLOT_COUNT-1).
+ * Checks that the magic stamp is present and that the slot header is not blank.
+ *
+ * @param[in] slot  Slot index (0 … RES_IMG_MAX_SLOTS-1).
  */
 bool ResInstaller_IsSlotValid(uint8_t slot);
+
+/**
+ * @brief  Copy the name stored in a slot's header into @p name_out.
+ *
+ * @p name_out must point to at least RES_IMG_NAME_LEN + 1 bytes.
+ * The string is null-terminated and in uppercase.
+ *
+ * @param[in]  slot      Slot index.
+ * @param[out] name_out  Destination buffer (≥ RES_IMG_NAME_LEN + 1 bytes).
+ * @return true  Slot is valid and name was copied.
+ * @return false Slot is invalid; @p name_out is left untouched.
+ */
+bool ResInstaller_GetSlotName(uint8_t slot, char *name_out);
 
 #endif

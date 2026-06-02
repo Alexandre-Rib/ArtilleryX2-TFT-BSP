@@ -117,4 +117,15 @@
 // ---------------------------------------------------------------------------
 void MKS_TFT28_Init(void);
 
+// ---------------------------------------------------------------------------
+// USB keep-alive hook
+// ---------------------------------------------------------------------------
+// BSP drivers that busy-poll for long durations (flash sector erase,
+// SD card wait-ready) call this hook periodically so USBH_Process stays
+// serviced and the USB RX FIFO does not overflow.
+// Set once at application startup, after USB Host initialisation.
+// Leave NULL (default) to disable.
+typedef void (*BSP_YieldFn_t)(void);
+extern BSP_YieldFn_t BSP_YieldHook;
+
 #endif

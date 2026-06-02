@@ -9,6 +9,7 @@
 
 #include "ui_nav.h"
 #include "keyboard.h"
+#include "mega9.h"
 #include "xpt2046.h"
 #include "os_timer.h"
 #include "mks_tft28.h"
@@ -167,6 +168,35 @@ static NavigationEvent_t poll_keyboard(uint32_t now_ms)
 }
 
 /**
+ * @brief  Poll the Mega Drive gamepad for a new button press (edge trigger).
+ *
+ *  Mapping actuel :
+ *    A → NAVIGATION_CONFIRM
+ *    C → NAVIGATION_BACK
+ *
+ *  La manette est ignorée si le lien Arduino est absent (timeout 500 ms).
+ *  Les autres boutons (croix, B, Start) sont suivis par le driver mais pas
+ *  encore mappés ici — ajouter les cas ci-dessous le moment venu.
+ *
+ * @return Navigation event, or NAVIGATION_NONE.
+ */
+static NavigationEvent_t poll_gamepad(void)
+{
+    if (!Mega9_IsConnected())
+        return NAVIGATION_NONE;
+
+    uint8_t new_btn = Mega9_GetNewButtons();
+    if (new_btn == 0u)
+        return NAVIGATION_NONE;
+
+    if (new_btn & MEGA9_BTN_A)    return NAVIGATION_CONFIRM;
+    if (new_btn & MEGA9_BTN_C)    return NAVIGATION_BACK;
+    // TODO: croix directionnelle → NAVIGATION_UP/DOWN/LEFT/RIGHT
+    // TODO: B, Start → non mappés
+    return NAVIGATION_NONE;
+}
+
+/**
  * @brief  Poll the touch screen for a rising-edge tap event.
  *
  * @return NAVIGATION_TOUCH on a new tap; NAVIGATION_NONE otherwise.
@@ -203,6 +233,13 @@ static NavigationEvent_t poll_touch(void)
 // Public API
 // ---------------------------------------------------------------------------
 
+void Navigation_FlushKeyboard(void)
+{
+    kb_prev_key     = 0;
+    kb_repeat_armed = false;
+    Mega9_FlushEdges();
+}
+
 void Navigation_Init(void)
 {
     kb_prev_key     = 0;
@@ -217,8 +254,12 @@ NavigationEvent_t Navigation_Poll(void)
 {
     uint32_t now_ms = OS_GetTimeMs();
 
-    // Keyboard takes priority over touch for navigation
+    // Keyboard takes priority
     NavigationEvent_t event = poll_keyboard(now_ms);
+    if (event != NAVIGATION_NONE) return event;
+
+    // Gamepad (same priority as keyboard, above touch)
+    event = poll_gamepad();
     if (event != NAVIGATION_NONE) return event;
 
     return poll_touch();

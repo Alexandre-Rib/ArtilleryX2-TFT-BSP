@@ -42,12 +42,14 @@ static uint16_t compute_crc(const Settings_t *settings)
 
 void Settings_GetDefault(Settings_t *out)
 {
-    out->magic       = SETTINGS_MAGIC;
-    out->touch_x_min = DEFAULT_X_MIN;
-    out->touch_x_max = DEFAULT_X_MAX;
-    out->touch_y_min = DEFAULT_Y_MIN;
-    out->touch_y_max = DEFAULT_Y_MAX;
-    out->crc         = compute_crc(out);
+    out->magic        = SETTINGS_MAGIC;
+    out->touch_x_min  = DEFAULT_X_MIN;
+    out->touch_x_max  = DEFAULT_X_MAX;
+    out->touch_y_min  = DEFAULT_Y_MIN;
+    out->touch_y_max  = DEFAULT_Y_MAX;
+    out->sound_volume = 40u;
+    out->_pad         = 0u;
+    out->crc          = compute_crc(out);
 }
 
 bool Settings_Load(Settings_t *out)

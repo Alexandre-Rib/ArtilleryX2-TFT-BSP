@@ -27,7 +27,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-#define SETTINGS_MAGIC  0xBEEFCAFEu   ///< Sentinel value written at the start of every valid sector.
+#define SETTINGS_MAGIC  0xBEEFCB00u   ///< Bumped when struct layout changes (v3: +sound_volume).
 
 /**
  * @brief  All persistent settings stored in external flash.
@@ -38,6 +38,8 @@ typedef struct {
     uint16_t touch_x_max;  ///< Largest raw ADC X value seen at the right screen edge.
     uint16_t touch_y_min;  ///< Smallest raw ADC Y value seen at the top screen edge.
     uint16_t touch_y_max;  ///< Largest raw ADC Y value seen at the bottom screen edge.
+    uint8_t  sound_volume; ///< Global buzzer volume 0–100 (duty-cycle % on the PWM).
+    uint8_t  _pad;         ///< Alignment padding — always write 0.
     uint16_t crc;           ///< XOR checksum of all bytes that precede this field.
 } Settings_t;
 

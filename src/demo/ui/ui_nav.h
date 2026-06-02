@@ -89,6 +89,16 @@ void Navigation_SetTouchCalibration(uint16_t x_min, uint16_t x_max,
                                     uint16_t y_min, uint16_t y_max);
 
 /**
+ * @brief  Reset keyboard auto-repeat state after a long blocking operation.
+ *
+ * During blocking calls (BMP decoding, flash erase, ...) USBH_Process is not
+ * called, so HID_Machine.buff keeps the last keycode even if the key was
+ * physically released.  Call this immediately after any blocking operation
+ * that can take more than REPEAT_DELAY_MS to prevent spurious repeat events.
+ */
+void Navigation_FlushKeyboard(void);
+
+/**
  * @brief  Read back the currently active touch calibration constants.
  *
  * @param[out] x_min  Raw ADC reading at the left edge.   Ignored when NULL.

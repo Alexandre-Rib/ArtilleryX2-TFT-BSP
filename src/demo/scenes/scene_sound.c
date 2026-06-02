@@ -1,25 +1,33 @@
 /**
  * @file    scene_sound.c
- * @brief   Scene: tone-sequence player -- Flash (W25Q64) or .snd files (SD browser)
- * @version 5.0
+ * @brief   Scene: tone-sequence player — Flash (W25Q64) or .snd files (SD browser)
+ * @version 6.0
  * @date    Created: 2026-05-31
  * @note    Developed with Claude Sonnet 4.6 (Anthropic)
  *
  *  Layout (320x240):
- *    y=  0.. 19 : title bar "SOUND"                  (20 px)
- *    y= 20.. 47 : source selector [SD] [FLASH]        (28 px)
- *    y= 48.. 49 : separator                            ( 2 px)
- *    y= 50..196 : list -- 7 rows x 21 px              (147 px)
- *    y=197..212 : status bar (path / playing name)     (16 px)
- *    y=213      : gap                                  ( 1 px)
- *    y=214..239 : footer [BACK | PLAY/STOP]            (26 px)
+ *    y=  0.. 19 : title bar "SOUND"               (20 px)
+ *    y= 20.. 47 : source selector [SD] [FLASH]     (28 px)
+ *    y= 48.. 49 : separator                         ( 2 px)
+ *    y= 50..175 : file list — 6 rows x 21 px       (126 px)
+ *    y=176..199 : volume slider                     (24 px)
+ *    y=200..212 : status bar                        (13 px)
+ *    y=213      : gap                               ( 1 px)
+ *    y=214..239 : footer [BACK | PLAY/STOP]         (26 px)
  *
- *  SD source uses SdBrowser (sd_browser.c) for all filesystem navigation.
- *  Flash source scans RES_SND_SLOT_COUNT slots in W25Q64.
+ *  Volume (0–100) is the global PWM duty-cycle for the buzzer.
+ *  It is persisted in Settings (W25Q64 settings sector) and restored on enter.
+ *  Touch anywhere on the slider bar sets volume proportionally.
+ *
+ *  File list rendering is delegated to FileBrowserWidget (ui_filebrowser.h).
+ *  SD browsing state is owned by SdBrowser (sd_browser.h).
+ *  Flash slot state is owned locally (flash_scan / flash_load).
  */
 
 #include "scene_sound.h"
 #include "sd_browser.h"
+#include "ui_filebrowser.h"
+#include "settings.h"
 #include "demo_app.h"
 #include "font_embedded.h"
 #include "ui_nav.h"
@@ -41,23 +49,32 @@
 #define SND_TITLE_H      20
 #define SND_SEL_H        28
 #define SND_SEP_H         2
-#define SND_LIST_ROWS     7
+#define SND_LIST_ROWS     6
 #define SND_ROW_H        21
-#define SND_STATUS_H     16
+#define SND_VOL_H        24
+#define SND_STATUS_H     13
 #define SND_FOOTER_H     26
 
 #define SND_TITLE_Y0      0
 #define SND_TITLE_Y1      SND_TITLE_H
 #define SND_SEL_Y0        SND_TITLE_Y1
-#define SND_SEL_Y1       (SND_SEL_Y0 + SND_SEL_H)
+#define SND_SEL_Y1       (SND_SEL_Y0  + SND_SEL_H)
 #define SND_SEP_Y0        SND_SEL_Y1
-#define SND_SEP_Y1       (SND_SEP_Y0 + SND_SEP_H)
+#define SND_SEP_Y1       (SND_SEP_Y0  + SND_SEP_H)
 #define SND_LIST_Y0       SND_SEP_Y1
 #define SND_LIST_Y1      (SND_LIST_Y0 + SND_LIST_ROWS * SND_ROW_H)
-#define SND_STATUS_Y0     SND_LIST_Y1
+#define SND_VOL_Y0        SND_LIST_Y1
+#define SND_VOL_Y1       (SND_VOL_Y0  + SND_VOL_H)
+#define SND_STATUS_Y0     SND_VOL_Y1
 #define SND_STATUS_Y1    (SND_STATUS_Y0 + SND_STATUS_H)
 #define SND_FOOTER_Y0    (LCD_HEIGHT - SND_FOOTER_H)
 
+// File-list widget geometry (matches layout above)
+static const FBWidgetGeom_t k_list_geom = {
+    0, SND_LIST_Y0, LCD_WIDTH, SND_LIST_ROWS, SND_ROW_H
+};
+
+// Source selector buttons
 #define SND_BTN_W        100
 #define SND_BTN_H         20
 #define SND_BTN_GAP        8
@@ -68,6 +85,17 @@
 #define SND_BTN_FL_X0    (SND_BTN_SD_X1 + SND_BTN_GAP)
 #define SND_BTN_FL_X1    (SND_BTN_FL_X0 + SND_BTN_W)
 
+// Volume slider geometry within SND_VOL zone
+#define VOL_LABEL_W      36u
+#define VOL_VALUE_W      36u
+#define VOL_TRACK_X0     VOL_LABEL_W
+#define VOL_TRACK_X1    (LCD_WIDTH - VOL_VALUE_W)
+#define VOL_TRACK_W     (VOL_TRACK_X1 - VOL_TRACK_X0)
+#define VOL_BAR_H        6u
+#define VOL_BAR_Y0       (SND_VOL_Y0 + (SND_VOL_H - VOL_BAR_H) / 2)
+#define VOL_BAR_Y1       (VOL_BAR_Y0 + VOL_BAR_H)
+
+// Footer
 #define SND_BACK_X0       0
 #define SND_BACK_X1     158
 #define SND_PLAY_X0     162
@@ -85,14 +113,6 @@
 #define C_BTN_ACT_BD     0x07FFu
 #define C_BTN_IDL_BG     0x2104u
 #define C_BTN_IDL_FG     0x4208u
-#define C_ROW_ODD        0x0821u
-#define C_ROW_EVEN       0x0000u
-#define C_ROW_FOCUS      0x1842u
-#define C_ROW_PLAY       0x0180u
-#define C_ROW_FG         0xFFFFu
-#define C_ROW_FG_PLAY    0x07E0u
-#define C_ROW_FG_PARENT  0x07FFu   // cyan  -- ".." parent entry
-#define C_ROW_FG_DIR     0xFD20u   // amber -- directory
 #define C_STATUS_BG      0x0821u
 #define C_STATUS_IDLE    0x4208u
 #define C_STATUS_SEL     0x8410u
@@ -104,6 +124,11 @@
 #define C_PLAY_RDY       0x0400u
 #define C_PLAY_ACT       0x8400u
 #define C_PLAY_FG        0xFFFFu
+#define C_VOL_BG         0x0821u
+#define C_VOL_TRACK      0x2104u
+#define C_VOL_FILL       0x07FFu   // cyan filled bar
+#define C_VOL_LABEL      0x8410u
+#define C_VOL_VALUE      0xFFFFu
 
 // ---------------------------------------------------------------------------
 // Tone note
@@ -123,7 +148,7 @@ static uint8_t s_flash_slots[RES_SND_SLOT_COUNT];
 static uint8_t s_flash_count;
 
 // ---------------------------------------------------------------------------
-// Note buffer -- shared between Flash and SD loading
+// Note buffer — shared by Flash and SD loading
 // ---------------------------------------------------------------------------
 #define NOTE_BUF_SIZE  256u
 
@@ -132,7 +157,7 @@ static uint16_t   s_note_count;
 static char       s_play_name[SDBROW_NAME_LEN];
 
 // ---------------------------------------------------------------------------
-// Playback state
+// Playback
 // ---------------------------------------------------------------------------
 typedef struct {
     const ToneNote_t *notes;
@@ -152,9 +177,40 @@ typedef enum { SOURCE_FLASH, SOURCE_SD } SoundSource_t;
 static SoundSource_t s_source;
 static int8_t        s_selected;
 static int8_t        s_scroll;
+static uint8_t       s_volume;   // 0–100, persisted via Settings
 
-// Accepted extensions for the SD browser in this scene
 static const char *const s_snd_exts[] = {"snd"};
+
+// Forward declarations (draw helpers defined later)
+static void draw_status(void);
+static void draw_footer(void);
+
+// ---------------------------------------------------------------------------
+// Item array builder — feeds the FileBrowserWidget
+// ---------------------------------------------------------------------------
+static uint8_t build_items(FBWidgetItem_t *items)
+{
+    uint8_t n;
+    if (s_source == SOURCE_FLASH) {
+        n = s_flash_count;
+        for (uint8_t i = 0; i < n; i++) {
+            items[i].type      = FBWI_FILE;
+            items[i].name      = s_flash_names[i];
+            items[i].is_playing = s_play.active && (i == (uint8_t)s_selected);
+        }
+    } else {
+        n = SdBrowser_GetItemCount();
+        for (uint8_t i = 0; i < n; i++) {
+            const SdBrowItem_t *it = SdBrowser_GetItem(i);
+            items[i].type      = (FBWidgetItemType_t)it->type;
+            items[i].name      = it->name;
+            items[i].is_playing = s_play.active &&
+                                  it->type == SDBROW_ITEM_FILE &&
+                                  strcmp(it->name, s_play_name) == 0;
+        }
+    }
+    return n;
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -168,19 +224,19 @@ static int8_t list_count(void)
 static const char *item_name(int8_t idx)
 {
     if (s_source == SOURCE_FLASH) return s_flash_names[idx];
-    const SdBrowItem_t *item = SdBrowser_GetItem((uint8_t)idx);
-    return item ? item->name : "";
+    const SdBrowItem_t *it = SdBrowser_GetItem((uint8_t)idx);
+    return it ? it->name : "";
 }
 
 static bool sd_selected_is_file(void)
 {
     if (s_source != SOURCE_SD || s_selected < 0) return false;
-    const SdBrowItem_t *item = SdBrowser_GetItem((uint8_t)s_selected);
-    return item && item->type == SDBROW_ITEM_FILE;
+    const SdBrowItem_t *it = SdBrowser_GetItem((uint8_t)s_selected);
+    return it && it->type == SDBROW_ITEM_FILE;
 }
 
 // ---------------------------------------------------------------------------
-// Flash: scan all slots, populate only the installed ones
+// Flash: scan installed slots
 // ---------------------------------------------------------------------------
 static void flash_scan(void)
 {
@@ -197,7 +253,7 @@ static void flash_scan(void)
 }
 
 // ---------------------------------------------------------------------------
-// Flash: load notes from a discovered slot into s_note_buf
+// Flash: load notes from slot into s_note_buf
 // ---------------------------------------------------------------------------
 static bool flash_load(int8_t display_idx)
 {
@@ -215,7 +271,7 @@ static bool flash_load(int8_t display_idx)
 }
 
 // ---------------------------------------------------------------------------
-// SD: load selected .snd file into s_note_buf
+// SD: load .snd file into s_note_buf
 // ---------------------------------------------------------------------------
 static bool sd_load(int8_t idx)
 {
@@ -243,14 +299,13 @@ static bool sd_load(int8_t idx)
 // ---------------------------------------------------------------------------
 static void playback_start(uint32_t now_ms)
 {
-    s_play.notes   = s_note_buf;
-    s_play.count   = s_note_count;
-    s_play.pos     = 0;
-    s_play.active  = true;
+    s_play.notes  = s_note_buf;
+    s_play.count  = s_note_count;
+    s_play.pos    = 0;
+    s_play.active = true;
 
     if (s_note_buf[0].freq == 0u) Buzzer_Stop();
-    else                          Buzzer_Set(s_note_buf[0].freq, 80u);
-
+    else                          Buzzer_Set(s_note_buf[0].freq, s_volume);
     s_play.next_ms = now_ms + s_note_buf[0].dur_ms;
 }
 
@@ -261,8 +316,38 @@ static void playback_stop(void)
     s_play.pos    = 0;
 }
 
+static void playback_tick(uint32_t now_ms)
+{
+    if (!s_play.active || now_ms < s_play.next_ms) return;
+    s_play.pos++;
+    if (s_play.pos >= s_play.count) {
+        playback_stop();
+        FBWidgetItem_t items[SDBROW_MAX_ITEMS];
+        uint8_t n = build_items(items);
+        FileBrowserWidget_Draw(&k_list_geom, items, n, s_scroll, s_selected);
+        draw_status();
+        draw_footer();
+        return;
+    }
+    const ToneNote_t *note = &s_play.notes[s_play.pos];
+    if (note->freq == 0u) Buzzer_Stop();
+    else                  Buzzer_Set(note->freq, s_volume);
+    s_play.next_ms = now_ms + note->dur_ms;
+}
+
 // ---------------------------------------------------------------------------
-// Draw helpers
+// Volume: save to flash (preserves existing calibration)
+// ---------------------------------------------------------------------------
+static void volume_save(void)
+{
+    Settings_t cfg;
+    if (!Settings_Load(&cfg)) Settings_GetDefault(&cfg);
+    cfg.sound_volume = s_volume;
+    Settings_Save(&cfg);
+}
+
+// ---------------------------------------------------------------------------
+// Draw helpers — icons
 // ---------------------------------------------------------------------------
 static void draw_back_arrow(int16_t cx, int16_t cy)
 {
@@ -311,58 +396,34 @@ static void draw_source_selector(void)
 }
 
 // ---------------------------------------------------------------------------
-// Draw: list
+// Draw: volume slider
 // ---------------------------------------------------------------------------
-static void draw_list_row(int8_t vis_idx)
+static void draw_volume(void)
 {
-    int8_t  item_idx = s_scroll + vis_idx;
-    int8_t  total    = list_count();
-    int16_t y0 = (int16_t)(SND_LIST_Y0 + (int16_t)vis_idx * SND_ROW_H);
-    int16_t y1 = y0 + SND_ROW_H;
+    GUI_FillRectColor(0, SND_VOL_Y0, LCD_WIDTH, SND_VOL_Y1, C_VOL_BG);
 
-    if (item_idx >= total) {
-        uint16_t bg = ((uint8_t)vis_idx & 1u) ? C_ROW_ODD : C_ROW_EVEN;
-        GUI_FillRectColor(0,(uint16_t)y0,LCD_WIDTH,(uint16_t)y1,bg);
-        return;
+    // "VOL" label
+    Font_DrawStringCentered(0, SND_VOL_Y0, VOL_LABEL_W, SND_VOL_Y1, "VOL", 1, C_VOL_LABEL);
+
+    // Track background
+    GUI_FillRectColor(VOL_TRACK_X0, VOL_BAR_Y0, VOL_TRACK_X1, VOL_BAR_Y1, C_VOL_TRACK);
+
+    // Filled bar
+    uint16_t filled = (uint16_t)((uint32_t)s_volume * VOL_TRACK_W / 100u);
+    if (filled > 0u)
+        GUI_FillRectColor(VOL_TRACK_X0, VOL_BAR_Y0,
+                          VOL_TRACK_X0 + filled, VOL_BAR_Y1, C_VOL_FILL);
+
+    // Percentage value "  0" .. "100"
+    char val[5];
+    if (s_volume == 100u) {
+        val[0]='1'; val[1]='0'; val[2]='0'; val[3]='%'; val[4]='\0';
+    } else {
+        val[0] = '0' + s_volume / 10u;
+        val[1] = '0' + s_volume % 10u;
+        val[2] = '%'; val[3] = '\0';
     }
-
-    bool is_play = false;
-    if (s_play.active) {
-        if (s_source == SOURCE_FLASH) {
-            is_play = (item_idx == s_selected);
-        } else {
-            const SdBrowItem_t *it = SdBrowser_GetItem((uint8_t)item_idx);
-            is_play = it && it->type == SDBROW_ITEM_FILE &&
-                      strcmp(it->name, s_play_name) == 0;
-        }
-    }
-    bool is_foc = (item_idx == s_selected);
-
-    uint16_t bg, fg;
-    if (is_play)     { bg = C_ROW_PLAY;  fg = C_ROW_FG_PLAY; }
-    else if (is_foc) { bg = C_ROW_FOCUS; fg = C_ROW_FG; }
-    else             { bg = ((uint8_t)vis_idx & 1u) ? C_ROW_ODD : C_ROW_EVEN;
-                       fg = C_ROW_FG; }
-
-    GUI_FillRectColor(0,(uint16_t)y0,LCD_WIDTH,(uint16_t)y1,bg);
-
-    if (s_source == SOURCE_SD && !is_foc && !is_play) {
-        const SdBrowItem_t *it = SdBrowser_GetItem((uint8_t)item_idx);
-        if (it) {
-            if      (it->type == SDBROW_ITEM_PARENT) { GUI_FillRectColor(0,(uint16_t)y0,3,(uint16_t)y1,C_ROW_FG_PARENT); fg = C_ROW_FG_PARENT; }
-            else if (it->type == SDBROW_ITEM_DIR)    { GUI_FillRectColor(0,(uint16_t)y0,3,(uint16_t)y1,C_ROW_FG_DIR);    fg = C_ROW_FG_DIR;    }
-        }
-    } else if (is_foc || is_play) {
-        uint16_t acc = is_play ? C_ROW_FG_PLAY : C_SEP;
-        GUI_FillRectColor(0,(uint16_t)y0,3,(uint16_t)y1,acc);
-    }
-
-    Font_DrawStringCentered(6, y0, LCD_WIDTH-4, y1, item_name(item_idx), 1, fg);
-}
-
-static void draw_list(void)
-{
-    for (int8_t i = 0; i < (int8_t)SND_LIST_ROWS; i++) draw_list_row(i);
+    Font_DrawStringCentered(VOL_TRACK_X1, SND_VOL_Y0, LCD_WIDTH, SND_VOL_Y1, val, 1, C_VOL_VALUE);
 }
 
 // ---------------------------------------------------------------------------
@@ -432,14 +493,18 @@ static void draw_footer(void)
 // ---------------------------------------------------------------------------
 // Full layout
 // ---------------------------------------------------------------------------
-static void draw_static_layout(void)
+static void draw_all(void)
 {
+    FBWidgetItem_t items[SDBROW_MAX_ITEMS];
+    uint8_t n = build_items(items);
+
     GUI_Clear(BLACK);
     GUI_FillRectColor(0, SND_TITLE_Y0, LCD_WIDTH, SND_TITLE_Y1, C_TITLE_BG);
     Font_DrawStringCentered(0, SND_TITLE_Y0, LCD_WIDTH, SND_TITLE_Y1, "SOUND", 1, C_TITLE_FG);
     draw_source_selector();
     GUI_FillRectColor(0, SND_SEP_Y0, LCD_WIDTH, SND_SEP_Y1, C_SEP);
-    draw_list();
+    FileBrowserWidget_Draw(&k_list_geom, items, n, s_scroll, s_selected);
+    draw_volume();
     draw_status();
     GUI_FillRectColor(0, SND_STATUS_Y1, LCD_WIDTH, SND_FOOTER_Y0, BLACK);
     draw_footer();
@@ -459,7 +524,10 @@ static void select_item(int8_t idx)
         s_scroll = s_selected;
     else if (s_selected >= s_scroll + (int8_t)SND_LIST_ROWS)
         s_scroll = (int8_t)(s_selected - (int8_t)SND_LIST_ROWS + 1);
-    draw_list();
+
+    FBWidgetItem_t items[SDBROW_MAX_ITEMS];
+    uint8_t n = build_items(items);
+    FileBrowserWidget_Draw(&k_list_geom, items, n, s_scroll, s_selected);
     draw_status();
     draw_footer();
 }
@@ -474,46 +542,56 @@ static void switch_source(SoundSource_t src)
     s_source   = src;
     s_selected = -1;
     s_scroll   = 0;
+
+    FBWidgetItem_t items[SDBROW_MAX_ITEMS];
+    uint8_t n = build_items(items);
     draw_source_selector();
-    draw_list();
+    FileBrowserWidget_Draw(&k_list_geom, items, n, s_scroll, s_selected);
     draw_status();
     draw_footer();
 }
 
 // ---------------------------------------------------------------------------
-// Logic: activate the focused item
+// Logic: activate focused item (navigate or play)
 // ---------------------------------------------------------------------------
 static void activate_item(int8_t idx, uint32_t now_ms)
 {
     if (s_source == SOURCE_SD) {
-        const SdBrowItem_t *item = SdBrowser_GetItem((uint8_t)idx);
-        if (!item) return;
+        const SdBrowItem_t *it = SdBrowser_GetItem((uint8_t)idx);
+        if (!it) return;
 
-        if (item->type == SDBROW_ITEM_PARENT) {
+        if (it->type == SDBROW_ITEM_PARENT) {
             playback_stop();
             SdBrowser_GoUp();
             s_selected = -1; s_scroll = 0;
-            draw_list(); draw_status(); draw_footer();
+            FBWidgetItem_t items[SDBROW_MAX_ITEMS];
+            uint8_t n = build_items(items);
+            FileBrowserWidget_Draw(&k_list_geom, items, n, s_scroll, s_selected);
+            draw_status(); draw_footer();
             return;
         }
-        if (item->type == SDBROW_ITEM_DIR) {
+        if (it->type == SDBROW_ITEM_DIR) {
             playback_stop();
             SdBrowser_EnterDir((uint8_t)idx);
             s_selected = -1; s_scroll = 0;
-            draw_list(); draw_status(); draw_footer();
+            FBWidgetItem_t items[SDBROW_MAX_ITEMS];
+            uint8_t n = build_items(items);
+            FileBrowserWidget_Draw(&k_list_geom, items, n, s_scroll, s_selected);
+            draw_status(); draw_footer();
             return;
         }
-        // SDBROW_ITEM_FILE falls through to play toggle below
+        // SDBROW_ITEM_FILE falls through
     }
 
-    // Flash or SD FILE: first activate selects; second toggles play/stop
     if (idx == s_selected) {
         if (s_play.active) {
             playback_stop();
+            FBWidgetItem_t items[SDBROW_MAX_ITEMS];
+            uint8_t n = build_items(items);
             int8_t vis = s_selected - s_scroll;
-            if (vis >= 0 && vis < (int8_t)SND_LIST_ROWS) draw_list_row(vis);
-            draw_status();
-            draw_footer();
+            if (vis >= 0 && vis < (int8_t)SND_LIST_ROWS)
+                FileBrowserWidget_DrawRow(&k_list_geom, items, n, (uint8_t)vis, s_scroll, s_selected);
+            draw_status(); draw_footer();
         } else {
             bool loaded = (s_source == SOURCE_FLASH) ? flash_load(s_selected)
                                                       : sd_load(s_selected);
@@ -521,37 +599,16 @@ static void activate_item(int8_t idx, uint32_t now_ms)
             strncpy(s_play_name, item_name(s_selected), SDBROW_NAME_LEN - 1u);
             s_play_name[SDBROW_NAME_LEN - 1u] = '\0';
             playback_start(now_ms);
+            FBWidgetItem_t items[SDBROW_MAX_ITEMS];
+            uint8_t n = build_items(items);
             int8_t vis = s_selected - s_scroll;
-            if (vis >= 0 && vis < (int8_t)SND_LIST_ROWS) draw_list_row(vis);
-            draw_status();
-            draw_footer();
+            if (vis >= 0 && vis < (int8_t)SND_LIST_ROWS)
+                FileBrowserWidget_DrawRow(&k_list_geom, items, n, (uint8_t)vis, s_scroll, s_selected);
+            draw_status(); draw_footer();
         }
     } else {
         select_item(idx);
     }
-}
-
-// ---------------------------------------------------------------------------
-// Playback tick
-// ---------------------------------------------------------------------------
-static void playback_tick(uint32_t now_ms)
-{
-    if (!s_play.active) return;
-    if (now_ms < s_play.next_ms) return;
-
-    s_play.pos++;
-    if (s_play.pos >= s_play.count) {
-        playback_stop();
-        draw_list();
-        draw_status();
-        draw_footer();
-        return;
-    }
-
-    const ToneNote_t *n = &s_play.notes[s_play.pos];
-    if (n->freq == 0u) Buzzer_Stop();
-    else               Buzzer_Set(n->freq, 80u);
-    s_play.next_ms = now_ms + n->dur_ms;
 }
 
 // ---------------------------------------------------------------------------
@@ -560,6 +617,13 @@ static void playback_tick(uint32_t now_ms)
 
 void SceneSound_OnEnter(void)
 {
+    // Restore persistent volume
+    Settings_t cfg;
+    if (Settings_Load(&cfg) && cfg.sound_volume <= 100u)
+        s_volume = cfg.sound_volume;
+    else
+        s_volume = 40u;
+
     s_source      = SOURCE_FLASH;
     s_selected    = -1;
     s_scroll      = 0;
@@ -571,38 +635,56 @@ void SceneSound_OnEnter(void)
     flash_scan();
     SdBrowser_Init(s_snd_exts, 1u);
     SdBrowser_Mount();
-    draw_static_layout();
+    draw_all();
 }
 
 bool SceneSound_OnUpdate(uint32_t now_ms, NavigationEvent_t event)
 {
     playback_tick(now_ms);
 
-    // Hot-plug: detect SD insertion/removal regardless of user input
+    // Hot-plug SD detection (throttled to 500 ms inside SdBrowser_Poll)
     if (s_source == SOURCE_SD && SdBrowser_Poll(now_ms)) {
         if (s_play.active) playback_stop();
         s_selected = -1;
         s_scroll   = 0;
-        draw_list(); draw_status(); draw_footer();
+        FBWidgetItem_t items[SDBROW_MAX_ITEMS];
+        uint8_t n = build_items(items);
+        FileBrowserWidget_Draw(&k_list_geom, items, n, s_scroll, s_selected);
+        draw_status(); draw_footer();
     }
 
     if (event == NAVIGATION_TOUCH) {
         int16_t tx, ty;
         Navigation_GetTouchPosition(&tx, &ty);
 
+        // Source selector
         if (ty >= SND_SEL_Y0 && ty < SND_SEL_Y1) {
             if      (tx >= SND_BTN_SD_X0 && tx < SND_BTN_SD_X1) switch_source(SOURCE_SD);
             else if (tx >= SND_BTN_FL_X0 && tx < SND_BTN_FL_X1) switch_source(SOURCE_FLASH);
             return false;
         }
 
-        if (ty >= SND_LIST_Y0 && ty < SND_LIST_Y1) {
-            int8_t vis = (int8_t)((ty - SND_LIST_Y0) / SND_ROW_H);
-            int8_t idx = s_scroll + vis;
-            if (idx < list_count()) activate_item(idx, now_ms);
+        // File list
+        {
+            uint8_t vis;
+            if (FileBrowserWidget_HitTest(&k_list_geom, tx, ty, &vis)) {
+                int8_t idx = s_scroll + (int8_t)vis;
+                if (idx < list_count()) activate_item(idx, now_ms);
+                return false;
+            }
+        }
+
+        // Volume slider — update RAM immediately, save deferred to OnExit
+        if (ty >= SND_VOL_Y0 && ty < SND_VOL_Y1) {
+            if (tx >= (int16_t)VOL_TRACK_X0 && tx < (int16_t)VOL_TRACK_X1) {
+                uint32_t v = (uint32_t)(tx - (int16_t)VOL_TRACK_X0) * 100u / VOL_TRACK_W;
+                s_volume = (uint8_t)(v > 100u ? 100u : v);
+                draw_volume();
+            }
             return false;
         }
 
+        // Footer
         if (ty >= SND_FOOTER_Y0) {
             if (tx < SND_BACK_X1) {
                 DemoApp_RequestExit();
@@ -640,4 +722,5 @@ void SceneSound_OnExit(void)
 {
     playback_stop();
     SdBrowser_Unmount();
+    volume_save();   // single flash sector erase on exit, never during interaction
 }

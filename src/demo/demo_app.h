@@ -10,6 +10,8 @@
 #ifndef _DEMO_APP_H_
 #define _DEMO_APP_H_
 
+#include <stdbool.h>
+
 /**
  * @brief  Start the BSP showcase demo application.
  *
@@ -26,5 +28,22 @@ void DemoApp_Run(void);
  * Safe to call from any scene's on_update() function.
  */
 void DemoApp_RequestExit(void);
+
+/**
+ * @brief  True if DemoApp_RequestExit() has been called and not yet processed.
+ *
+ * Used by container scenes (e.g. SceneControllers) to intercept an exit
+ * requested by a child scene and redirect it back to the submenu instead of
+ * propagating all the way to the main menu.
+ */
+bool DemoApp_IsExitRequested(void);
+
+/**
+ * @brief  Cancel a pending exit request.
+ *
+ * Resets the flag set by DemoApp_RequestExit().  Call this before redirecting
+ * the user back to a submenu so the main loop does not also exit.
+ */
+void DemoApp_CancelExit(void);
 
 #endif
