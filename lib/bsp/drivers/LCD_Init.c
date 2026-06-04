@@ -78,3 +78,18 @@ void LCD_SetWindow(uint16_t sx, uint16_t sy, uint16_t ex, uint16_t ey)
 {
   pLCD_SetWindow(sx, sy, ex, ey);
 }
+
+void LCD_ReadPixels(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t *buf)
+{
+  // Set window using HX8558_SetWindow (ends with 0x2C write-mode command)
+  pLCD_SetWindow((uint16_t)x, (uint16_t)y,
+                 (uint16_t)(x + (int16_t)w - 1),
+                 (uint16_t)(y + (int16_t)h - 1));
+  // Override write-mode with read command (HX8558 uses 0x22 for GRAM read)
+  LCD_WR_REG(0x22);
+  Delay_us(1);
+  LCD_RD_DATA();          // mandatory dummy read
+  uint32_t n = (uint32_t)w * h;
+  for (uint32_t i = 0; i < n; i++)
+    buf[i] = LCD_RD_DATA();
+}

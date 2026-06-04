@@ -49,9 +49,14 @@
 #define BTN_Y0     66
 #define BTN_X(c)  (BTN_GAP + (c) * (BTN_W + BTN_GAP))
 
-#define TITLE_H   14
+#define TITLE_H     14
+#define FOOTER_H    26
+#define FOOTER_Y0   (LCD_HEIGHT - FOOTER_H)   // 214
+
 #define C_TITLE_BG  0x000Fu
 #define C_TITLE_FG  0xFFFFu
+#define C_BACK_BG   0x8800u
+#define C_BACK_FG   0xFFFFu
 
 // ---------------------------------------------------------------------------
 // État interne
@@ -221,6 +226,10 @@ static void draw_menu(void)
     // USB diagnostic — zone noire sous les boutons (y=174..200)
     GUI_FillRectColor(0, 174, LCD_WIDTH, 200, BLACK);
     Font_DrawStringCentered(0, 178, LCD_WIDTH, 196, USB_GetDiagStr(), 1, 0xFFFFu);
+
+    // BACK footer button
+    GUI_FillRectColor(0, FOOTER_Y0, LCD_WIDTH, LCD_HEIGHT, C_BACK_BG);
+    Font_DrawStringCentered(0, FOOTER_Y0, LCD_WIDTH, LCD_HEIGHT, "BACK", 1, C_BACK_FG);
 }
 
 // ---------------------------------------------------------------------------
@@ -258,6 +267,16 @@ bool SceneControllers_OnUpdate(uint32_t now_ms, NavigationEvent_t event)
     // ------------------------------------------------------------------
     if (s_state == STATE_MENU) {
 
+        // Touch / LMB click on BACK footer → exit to main menu
+        if (event == NAVIGATION_TOUCH) {
+            int16_t tx, ty;
+            Navigation_GetTouchPosition(&tx, &ty);
+            if (ty >= FOOTER_Y0) {
+                DemoApp_RequestExit();
+                return false;
+            }
+        }
+
         // Détection plug/unplug à la volée
         bool kbd = Keyboard_IsConnected();
         bool mse = Mouse_IsConnected();
@@ -282,7 +301,7 @@ bool SceneControllers_OnUpdate(uint32_t now_ms, NavigationEvent_t event)
         }
 
         Menu_HandleEvent(&s_menu, event);
-        // MENU_RESULT_BACK → return false (demo_app sort vers le menu principal)
+        // NAVIGATION_BACK → return false (demo_app exits to main menu)
         return false;
     }
 

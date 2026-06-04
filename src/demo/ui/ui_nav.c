@@ -13,6 +13,7 @@
 #include "xpt2046.h"
 #include "os_timer.h"
 #include "mks_tft28.h"
+#include "mouse_cursor.h"
 #include <stdbool.h>
 
 // ---------------------------------------------------------------------------
@@ -53,6 +54,12 @@ static bool     kb_repeat_armed = false;
 static bool     touch_prev_pen  = false;
 static int16_t  touch_last_x    = 0;
 static int16_t  touch_last_y    = 0;
+
+static uint8_t  mouse_prev_btn  = 0;
+
+static uint8_t  gp_prev_dir     = 0;
+static uint32_t gp_dir_time     = 0;
+static bool     gp_repeat_armed = false;
 
 // ---------------------------------------------------------------------------
 // Internal helpers
@@ -168,32 +175,105 @@ static NavigationEvent_t poll_keyboard(uint32_t now_ms)
 }
 
 /**
- * @brief  Poll the Mega Drive gamepad for a new button press (edge trigger).
+ * @brief  Poll the Mega Drive gamepad for navigation events.
  *
- *  Mapping actuel :
- *    A → NAVIGATION_CONFIRM
- *    C → NAVIGATION_BACK
- *
- *  La manette est ignorée si le lien Arduino est absent (timeout 500 ms).
- *  Les autres boutons (croix, B, Start) sont suivis par le driver mais pas
- *  encore mappés ici — ajouter les cas ci-dessous le moment venu.
+ *  Mapping :
+ *    C     → NAVIGATION_CONFIRM  (edge-only)
+ *    A     → NAVIGATION_BACK     (edge-only)
+ *    Croix → NAVIGATION_UP/DOWN/LEFT/RIGHT  (avec auto-repeat)
  *
  * @return Navigation event, or NAVIGATION_NONE.
  */
 static NavigationEvent_t poll_gamepad(void)
 {
-    if (!Mega9_IsConnected())
+    if (!Mega9_IsConnected()) {
+        gp_prev_dir     = 0;
+        gp_repeat_armed = false;
         return NAVIGATION_NONE;
+    }
 
+    // Edge-triggered: C (confirm), A (back) — pas de repeat
     uint8_t new_btn = Mega9_GetNewButtons();
-    if (new_btn == 0u)
-        return NAVIGATION_NONE;
+    if (new_btn & MEGA9_BTN_C) return NAVIGATION_CONFIRM;
+    if (new_btn & MEGA9_BTN_A) return NAVIGATION_BACK;
 
-    if (new_btn & MEGA9_BTN_A)    return NAVIGATION_CONFIRM;
-    if (new_btn & MEGA9_BTN_C)    return NAVIGATION_BACK;
-    // TODO: croix directionnelle → NAVIGATION_UP/DOWN/LEFT/RIGHT
-    // TODO: B, Start → non mappés
+    // Croix directionnelle avec auto-repeat
+    uint32_t now_ms = OS_GetTimeMs();
+    uint8_t held = Mega9_GetButtons();
+    uint8_t dir = held & (MEGA9_BTN_UP | MEGA9_BTN_DOWN | MEGA9_BTN_LEFT | MEGA9_BTN_RIGHT);
+
+    if (dir == 0u) {
+        gp_prev_dir     = 0;
+        gp_repeat_armed = false;
+        return NAVIGATION_NONE;
+    }
+
+    if (dir != gp_prev_dir) {
+        gp_prev_dir     = dir;
+        gp_dir_time     = now_ms;
+        gp_repeat_armed = false;
+        if (dir & MEGA9_BTN_UP)    return NAVIGATION_UP;
+        if (dir & MEGA9_BTN_DOWN)  return NAVIGATION_DOWN;
+        if (dir & MEGA9_BTN_LEFT)  return NAVIGATION_LEFT;
+        if (dir & MEGA9_BTN_RIGHT) return NAVIGATION_RIGHT;
+    }
+
+    if (!gp_repeat_armed) {
+        if ((now_ms - gp_dir_time) >= REPEAT_DELAY_MS) {
+            gp_repeat_armed = true;
+            gp_dir_time     = now_ms;
+            if (dir & MEGA9_BTN_UP)    return NAVIGATION_UP;
+            if (dir & MEGA9_BTN_DOWN)  return NAVIGATION_DOWN;
+            if (dir & MEGA9_BTN_LEFT)  return NAVIGATION_LEFT;
+            if (dir & MEGA9_BTN_RIGHT) return NAVIGATION_RIGHT;
+        }
+        return NAVIGATION_NONE;
+    }
+
+    if ((now_ms - gp_dir_time) >= REPEAT_RATE_MS) {
+        gp_dir_time = now_ms;
+        if (dir & MEGA9_BTN_UP)    return NAVIGATION_UP;
+        if (dir & MEGA9_BTN_DOWN)  return NAVIGATION_DOWN;
+        if (dir & MEGA9_BTN_LEFT)  return NAVIGATION_LEFT;
+        if (dir & MEGA9_BTN_RIGHT) return NAVIGATION_RIGHT;
+    }
+
     return NAVIGATION_NONE;
+}
+
+/**
+ * @brief  Poll the USB HID mouse for movement and button events.
+ *
+ *  Calls MouseCursor_MoveDelta() to keep cursor position up-to-date.
+ *  Left-button press (rising edge) is translated to NAVIGATION_TOUCH at the
+ *  cursor hotspot position, matching touchscreen tap semantics.
+ *
+ * @return NAVIGATION_TOUCH on LMB press; NAVIGATION_NONE otherwise.
+ */
+static NavigationEvent_t poll_mouse(void)
+{
+    if (!Mouse_IsConnected()) {
+        mouse_prev_btn = 0;
+        return NAVIGATION_NONE;
+    }
+
+    int8_t  dx, dy;
+    uint8_t buttons;
+    Mouse_GetState(&dx, &dy, &buttons);
+
+    if (dx != 0 || dy != 0)
+        MouseCursor_MoveDelta(dx, dy);
+
+    uint8_t lmb = buttons & MOUSE_BTN_LEFT;
+    NavigationEvent_t ev = NAVIGATION_NONE;
+
+    if (lmb && !mouse_prev_btn) {
+        // Rising edge — treat as a touch tap at the cursor hotspot
+        MouseCursor_GetPos(&touch_last_x, &touch_last_y);
+        ev = NAVIGATION_TOUCH;
+    }
+    mouse_prev_btn = lmb;
+    return ev;
 }
 
 /**
@@ -248,6 +328,11 @@ void Navigation_Init(void)
     touch_prev_pen  = false;
     touch_last_x    = 0;
     touch_last_y    = 0;
+    mouse_prev_btn  = 0;
+    gp_prev_dir     = 0;
+    gp_dir_time     = 0;
+    gp_repeat_armed = false;
+    MouseCursor_Init();
 }
 
 NavigationEvent_t Navigation_Poll(void)
@@ -260,6 +345,10 @@ NavigationEvent_t Navigation_Poll(void)
 
     // Gamepad (same priority as keyboard, above touch)
     event = poll_gamepad();
+    if (event != NAVIGATION_NONE) return event;
+
+    // Mouse — updates cursor position and generates synthetic NAVIGATION_TOUCH
+    event = poll_mouse();
     if (event != NAVIGATION_NONE) return event;
 
     return poll_touch();

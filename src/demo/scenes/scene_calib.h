@@ -33,11 +33,19 @@
 #include <stdbool.h>
 
 /**
- * @brief  Enter the calibration scene.
+ * @brief  Enter the calibration scene in LIVE mode (default).
  *
  * Initialises state, resets MIN/MAX accumulators, and draws the LIVE layout.
  */
 void SceneCalib_OnEnter(void);
+
+/**
+ * @brief  Enter the calibration scene directly in PROCEDURE mode.
+ *
+ * Used by the long-press trigger — skips the LIVE diagnostic screen and
+ * starts the 4-corner guided procedure immediately.
+ */
+void SceneCalib_OnEnterProcedure(void);
 
 /**
  * @brief  Update the calibration scene for one main-loop iteration.

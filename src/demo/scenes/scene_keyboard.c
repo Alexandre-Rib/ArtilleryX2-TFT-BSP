@@ -25,6 +25,7 @@
 #include "demo_app.h"
 #include "font_embedded.h"
 #include "ui_nav.h"
+#include "settings.h"
 #include "GUI.h"
 #include "LCD_Colors.h"
 #include "keyboard.h"
@@ -249,6 +250,22 @@ void SceneKeyboard_OnEnter(void)
 bool SceneKeyboard_OnUpdate(uint32_t now_ms, NavigationEvent_t event)
 {
     (void)now_ms;
+
+    // Auto-exit when keyboard is unplugged
+    if (!Keyboard_IsConnected()) {
+        DemoApp_RequestExit();
+        return false;
+    }
+
+    // Block keyboard ESC from exiting the diagnostic when calibration data is in flash.
+    // If no calibration exists, ESC is the fallback exit (touch footer may be unreliable).
+#ifndef DIAG_BACK_UNLOCKED
+    if (event == NAVIGATION_BACK) {
+        Settings_t _cfg;
+        if (Settings_Load(&_cfg))
+            return true;
+    }
+#endif
 
     // Touch in footer area → back
     if (event == NAVIGATION_TOUCH) {

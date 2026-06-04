@@ -24,9 +24,9 @@
 #define MEGA9_BTN_DOWN   (1u << 1)
 #define MEGA9_BTN_LEFT   (1u << 2)
 #define MEGA9_BTN_RIGHT  (1u << 3)
-#define MEGA9_BTN_C      (1u << 4)   // → NAVIGATION_BACK  (Escape)
+#define MEGA9_BTN_C      (1u << 4)   // → NAVIGATION_CONFIRM (Enter)
 #define MEGA9_BTN_B      (1u << 5)
-#define MEGA9_BTN_A      (1u << 6)   // → NAVIGATION_CONFIRM (Enter)
+#define MEGA9_BTN_A      (1u << 6)   // → NAVIGATION_BACK  (Escape)
 #define MEGA9_BTN_START  (1u << 7)
 
 // ---------------------------------------------------------------------------

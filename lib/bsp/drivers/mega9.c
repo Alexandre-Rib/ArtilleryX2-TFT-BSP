@@ -23,9 +23,23 @@ extern HID_Machine_TypeDef HID_Machine;
 #define MEGA9_REPORT_ID   0x01u
 #define MEGA9_REPORT_SIZE 2u    // [report_id, buttons]
 
-void    Mega9_Init(void)      {}
-void    Mega9_Process(void)   {}
-void    Mega9_FlushEdges(void){}
+static uint8_t s_prev_buttons = 0u;
+static uint8_t s_new_buttons  = 0u;
+
+void Mega9_Init(void) {}
+
+void Mega9_Process(void)
+{
+    uint8_t cur = Mega9_GetButtons();
+    s_new_buttons |= (cur & ~s_prev_buttons);
+    s_prev_buttons  = cur;
+}
+
+void Mega9_FlushEdges(void)
+{
+    s_new_buttons  = 0u;
+    s_prev_buttons = Mega9_GetButtons();
+}
 
 bool Mega9_IsLinkAlive(void)  { return Joystick_IsConnected(); }
 bool Mega9_IsConnected(void)  { return Joystick_IsConnected(); }
@@ -41,5 +55,7 @@ uint8_t Mega9_GetButtons(void)
 
 uint8_t Mega9_GetNewButtons(void)
 {
-    return 0u;
+    uint8_t edges = s_new_buttons;
+    s_new_buttons  = 0u;
+    return edges;
 }

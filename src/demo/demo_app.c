@@ -37,12 +37,14 @@
 #include "scene_sound.h"
 #include "scene_controllers.h"
 #include "scene_calib.h"
+#include "longpress_calib.h"
 #include "keyboard.h"
 #include "mega9.h"
 #include "mks_tft28.h"
 #include "GUI.h"
 #include "LCD_Colors.h"
 #include "os_timer.h"
+#include "mouse_cursor.h"
 #include <stddef.h>
 #include <stdbool.h>
 
@@ -130,6 +132,7 @@ static const Scene_t scenes[6] = {
 // ---------------------------------------------------------------------------
 static int8_t active_scene_index = -1;
 static bool   exit_requested     = false;
+static bool   lpc_calib_active   = false;
 
 // ---------------------------------------------------------------------------
 // Icon button renderer — shared by all 6 draw functions
@@ -189,6 +192,8 @@ static void enter_scene(int8_t index)
 
     active_scene_index = index;
     exit_requested     = false;
+    // on_enter() clears the screen — cursor save-under is no longer valid
+    MouseCursor_Invalidate();
     scenes[index].on_enter();
 }
 
@@ -200,6 +205,8 @@ static void exit_scene(void)
     active_scene_index = -1;
     exit_requested     = false;
 
+    // Screen is about to be fully redrawn — invalidate cursor save-under
+    MouseCursor_Invalidate();
     main_items[main_menu.focused].button.state = BUTTON_FOCUSED;
     GUI_Clear(BLACK);
     Menu_Draw(&main_menu);
@@ -210,6 +217,19 @@ static void action_open_sound(void)    { enter_scene(1); }
 static void action_open_anim(void)     { enter_scene(2); }
 static void action_open_calib(void)    { enter_scene(3); }
 static void action_open_keyboard(void) { enter_scene(4); }
+
+/* Redraw the current screen after an overlay (LPC countdown) has been dismissed. */
+static void restore_current_screen(void)
+{
+    MouseCursor_Invalidate();
+    if (active_scene_index >= 0 && scenes[active_scene_index].on_enter) {
+        scenes[active_scene_index].on_enter();
+    } else {
+        main_items[main_menu.focused].button.state = BUTTON_FOCUSED;
+        GUI_Clear(BLACK);
+        Menu_Draw(&main_menu);
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -249,6 +269,7 @@ void DemoApp_Run(void)
     Mega9_Init();
     Navigation_Init();
     Keyboard_Init();
+    LongpressCalib_Init();
     BSP_YieldHook = yield_all;
 
     // Install resources from SD if a fresh "res/" directory is present.
@@ -279,17 +300,50 @@ void DemoApp_Run(void)
     while (1) {
         Keyboard_Process();
         Mega9_Process();
+
+        // Erase cursor before any drawing (restores background or no-op if hidden)
+        MouseCursor_Hide();
+
         uint32_t          now_ms = OS_GetTimeMs();
         NavigationEvent_t event  = Navigation_Poll();
 
-        if (active_scene_index >= 0) {
-            bool consumed = scenes[active_scene_index].on_update(now_ms, event);
-
-            if (exit_requested || (event == NAVIGATION_BACK && !consumed))
-                exit_scene();
-        } else {
-            MenuResult_t result = Menu_HandleEvent(&main_menu, event);
-            (void)result;
+        if (lpc_calib_active) {
+            // Long-press calibration scene running — intercept exit to restore previous screen.
+            bool consumed = SceneCalib_OnUpdate(now_ms, event);
+            if (exit_requested || (!consumed && event == NAVIGATION_BACK)) {
+                DemoApp_CancelExit();
+                SceneCalib_OnExit();
+                lpc_calib_active = false;
+                LongpressCalib_Reset();
+                restore_current_screen();
+            }
+        } else if (!LongpressCalib_IsBlocking()) {
+            // Normal operation — process scenes / main menu.
+            if (active_scene_index >= 0) {
+                bool consumed = scenes[active_scene_index].on_update(now_ms, event);
+                if (exit_requested || (event == NAVIGATION_BACK && !consumed))
+                    exit_scene();
+            } else {
+                MenuResult_t result = Menu_HandleEvent(&main_menu, event);
+                (void)result;
+            }
         }
+        // else: LPC overlay blocking (countdown / wait-release / 2-s hold-off) — scenes frozen.
+
+        // Long-press update — overlay drawn on top of current screen.
+        if (!lpc_calib_active) {
+            LpcStatus_t lpc = LongpressCalib_Update(now_ms);
+            if (lpc == LPC_LAUNCH) {
+                lpc_calib_active = true;
+                MouseCursor_Invalidate();
+                SceneCalib_OnEnterProcedure();
+            } else if (lpc == LPC_CANCELLED) {
+                restore_current_screen();
+            }
+        }
+
+        // Redraw cursor on top of the freshly-rendered frame.
+        if (Mouse_IsConnected())
+            MouseCursor_Show();
     }
 }

@@ -267,10 +267,11 @@ static void draw_procedure_save(bool focused)
 
 #define LIVE_TITLE_H  20
 #define LIVE_X_HDR    LIVE_TITLE_H
-#define LIVE_X_BAR    (LIVE_X_HDR + 5)
+#define LIVE_HDR_H    10                     // header band height (room for axis labels)
+#define LIVE_X_BAR    (LIVE_X_HDR + LIVE_HDR_H + 1)
 #define LIVE_X_VAL    (LIVE_X_BAR + 14)
 #define LIVE_Y_HDR    (LIVE_X_VAL + SEG_H + 6)
-#define LIVE_Y_BAR    (LIVE_Y_HDR + 5)
+#define LIVE_Y_BAR    (LIVE_Y_HDR + LIVE_HDR_H + 1)
 #define LIVE_Y_VAL    (LIVE_Y_BAR + 14)
 #define LIVE_CROSS_Y0 (LIVE_Y_VAL + SEG_H + 8)
 
@@ -372,8 +373,17 @@ static void live_draw_static_layout(void)
 {
     GUI_Clear(LIVE_COL_BG);
     GUI_FillRectColor(0, 0,          LCD_WIDTH, LIVE_TITLE_H,  0x2945u);
-    GUI_FillRectColor(0, LIVE_X_HDR, LCD_WIDTH, LIVE_X_HDR+4,  LIVE_COL_X);
-    GUI_FillRectColor(0, LIVE_Y_HDR, LCD_WIDTH, LIVE_Y_HDR+4,  LIVE_COL_Y);
+
+    // X axis header band with MIN / MAX labels
+    GUI_FillRectColor(0, LIVE_X_HDR, LCD_WIDTH, LIVE_X_HDR + LIVE_HDR_H, LIVE_COL_X);
+    Font_DrawStringCentered(0,            LIVE_X_HDR + 1, LIVE_MAX_SW,    LIVE_X_HDR + LIVE_HDR_H - 1, "X MIN", 1, BLACK);
+    Font_DrawStringCentered(LIVE_MAX_SW,  LIVE_X_HDR + 1, LIVE_MAX_VAL + NUM4_W, LIVE_X_HDR + LIVE_HDR_H - 1, "X MAX", 1, BLACK);
+
+    // Y axis header band with MIN / MAX labels
+    GUI_FillRectColor(0, LIVE_Y_HDR, LCD_WIDTH, LIVE_Y_HDR + LIVE_HDR_H, LIVE_COL_Y);
+    Font_DrawStringCentered(0,            LIVE_Y_HDR + 1, LIVE_MAX_SW,    LIVE_Y_HDR + LIVE_HDR_H - 1, "Y MIN", 1, BLACK);
+    Font_DrawStringCentered(LIVE_MAX_SW,  LIVE_Y_HDR + 1, LIVE_MAX_VAL + NUM4_W, LIVE_Y_HDR + LIVE_HDR_H - 1, "Y MAX", 1, BLACK);
+
     GUI_FillRectColor(0, FOOTER_Y-1, LCD_WIDTH, FOOTER_Y,      0x4228u);
 
     live_footer_items[0].button.state = BUTTON_FOCUSED;
@@ -399,16 +409,22 @@ static const int16_t CORNER_Y[4] = { 0, 0, LCD_HEIGHT-CORNER_SZ, LCD_HEIGHT-CORN
 #define DOT_X0     ((LCD_WIDTH - DOT_ROW_W) / 2)
 #define DOT_Y0     ((FOOTER_Y - CORNER_SZ - DOT_SZ) / 2 + CORNER_SZ)
 
-#define COLOR_STEP_ACTIVE  0xFFE0u
-#define COLOR_STEP_DIM     0x2945u
-#define COLOR_STEP_DONE    0x07E0u
+#define COLOR_STEP_ACTIVE   0xFFE0u
+#define COLOR_STEP_DIM      0x2945u
+#define COLOR_STEP_DONE     0x07E0u
 #define COLOR_STEP_INACTIVE 0x18C3u
+
+// Minimum continuous release duration required between two corner captures.
+// Prevents resistive-screen bounce from registering the same physical press twice.
+#define CORNER_RELEASE_MS  400u
 
 static uint8_t  procedure_step;
 static bool     procedure_done[4];
 static uint16_t procedure_min_x, procedure_max_x, procedure_min_y, procedure_max_y;
 static bool     procedure_blink;
 static bool     procedure_prev_pen;
+static bool     procedure_must_release;  // true after a capture — waits for clean lift
+static uint32_t procedure_lift_ms;       // timestamp of the start of the current lift
 
 // Forward declarations for procedure action callbacks
 static void action_procedure_quit(void);
@@ -474,9 +490,14 @@ static void procedure_draw_summary(void)
     int16_t  start_y  = area_y + (area_h - total_h) / 2;
     uint16_t values[4] = { procedure_min_x, procedure_max_x, procedure_min_y, procedure_max_y };
     uint16_t colors[4] = { LIVE_COL_MIN, LIVE_COL_MAX, LIVE_COL_MIN, LIVE_COL_MAX };
+    static const char *const labels[4] = { "X MIN", "X MAX", "Y MIN", "Y MAX" };
 
     for (int i = 0; i < 4; i++) {
         int16_t row_y = start_y + i * SEG_H;   // compact row stride
+        // Label in the left margin (area_x to start_x)
+        Font_DrawStringCentered(area_x, row_y, start_x - 2, row_y + SEG_H,
+                                labels[i], 1, colors[i]);
+        // Colored square + number
         GUI_FillRectColor(start_x, row_y+4, start_x+8, row_y+12, colors[i]);
         draw_segment_number(start_x+12, row_y, values[i], colors[i], 0x0000u);
     }
@@ -563,10 +584,12 @@ static void procedure_draw_static_layout(void)
  */
 static void enter_procedure_mode(void)
 {
-    current_mode = MODE_PROCEDURE;
-    procedure_step     = 0;
-    procedure_blink    = true;
-    procedure_prev_pen = true;
+    current_mode           = MODE_PROCEDURE;
+    procedure_step         = 0;
+    procedure_blink        = true;
+    procedure_prev_pen     = true;   // pre-armed: skip the press that opened this mode
+    procedure_must_release = false;
+    procedure_lift_ms      = 0;
     procedure_min_x = 0xFFFFu; procedure_max_x = 0u;
     procedure_min_y = 0xFFFFu; procedure_max_y = 0u;
     memset(procedure_done, 0, sizeof(procedure_done));
@@ -603,6 +626,12 @@ void SceneCalib_OnEnter(void)
 
     live_footer_menu.focused = 0;
     live_draw_static_layout();
+}
+
+void SceneCalib_OnEnterProcedure(void)
+{
+    entry_time_ms = OS_GetTimeMs();
+    enter_procedure_mode();
 }
 
 bool SceneCalib_OnUpdate(uint32_t now_ms, NavigationEvent_t event)
@@ -655,7 +684,22 @@ bool SceneCalib_OnUpdate(uint32_t now_ms, NavigationEvent_t event)
         // values that do not exist yet and would misidentify bottom-screen corners
         // (steps 2 and 3) as footer touches.  QUIT is keyboard-only (ESC key).
         bool pen_down = (XPT2046_Read_Pen() == 0);
-        if (pen_down && !procedure_prev_pen && touch_debounce_elapsed() && procedure_step < 4) {
+
+        // Release debounce: after each capture the pen must stay up for CORNER_RELEASE_MS
+        // before another capture is allowed. Prevents resistive-screen bounce from
+        // registering the same physical press twice.
+        if (procedure_must_release) {
+            if (!pen_down) {
+                if (procedure_lift_ms == 0u) procedure_lift_ms = now_ms;
+                if ((now_ms - procedure_lift_ms) >= CORNER_RELEASE_MS)
+                    procedure_must_release = false;
+            } else {
+                procedure_lift_ms = 0u;   // still pressed — reset the lift timer
+            }
+        }
+
+        if (pen_down && !procedure_prev_pen && !procedure_must_release
+                && touch_debounce_elapsed() && procedure_step < 4) {
             uint16_t adc_v = XPT2046_Repeated_Compare_AD(ADC_CMD_VERTICAL);
             uint16_t adc_h = XPT2046_Repeated_Compare_AD(ADC_CMD_HORIZONTAL);
             if (adc_v != 0 && adc_h != 0) {
@@ -666,6 +710,8 @@ bool SceneCalib_OnUpdate(uint32_t now_ms, NavigationEvent_t event)
                 procedure_done[procedure_step] = true;
                 procedure_draw_corner(procedure_step, COLOR_STEP_DONE);
                 procedure_step++;
+                procedure_must_release = true;   // arm release requirement for next corner
+                procedure_lift_ms      = 0u;
                 procedure_draw_progress_dots();
                 if (procedure_step >= 4) {
                     Delay_ms(150);

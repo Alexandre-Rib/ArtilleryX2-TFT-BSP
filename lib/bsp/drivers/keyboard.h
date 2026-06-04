@@ -103,4 +103,19 @@ void     Keyboard_SetLayout(KB_LAYOUT layout);
 // Returns true if a new key-press event occurred since the last call
 bool     Keyboard_HasNewKey(void);
 
+// ---------------------------------------------------------------------------
+// Mouse API
+// ---------------------------------------------------------------------------
+#define MOUSE_BTN_LEFT   (1u << 0)
+#define MOUSE_BTN_RIGHT  (1u << 1)
+#define MOUSE_BTN_MIDDLE (1u << 2)
+
+// Read accumulated mouse delta and button state since last call.
+// Clears dx and dy after reading (buttons are NOT cleared).
+// Returns zeros if no mouse is connected.
+void     Mouse_GetState(int8_t *dx, int8_t *dy, uint8_t *buttons);
+
+// Returns the current mouse button bitmask (MOUSE_BTN_*) without clearing delta.
+uint8_t  Mouse_GetButtons(void);
+
 #endif

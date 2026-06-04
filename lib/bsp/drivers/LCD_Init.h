@@ -25,4 +25,9 @@ void LCD_Init(void);
 void LCD_RefreshDirection(uint8_t rotate);
 void LCD_SetWindow(uint16_t sx, uint16_t sy, uint16_t ex, uint16_t ey);
 
+// Read w*h pixels starting at (x,y) into buf[] as RGB565.
+// Caller must ensure buf has room for w*h uint16_t values.
+// Uses HX8558 memory-read command (0x22).
+void LCD_ReadPixels(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t *buf);
+
 #endif
