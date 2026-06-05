@@ -85,9 +85,9 @@ void LCD_ReadPixels(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t *buf)
   pLCD_SetWindow((uint16_t)x, (uint16_t)y,
                  (uint16_t)(x + (int16_t)w - 1),
                  (uint16_t)(y + (int16_t)h - 1));
-  // Override write-mode with read command (HX8558 uses 0x22 for GRAM read)
-  LCD_WR_REG(0x22);
-  Delay_us(1);
+  // Switch to GRAM read mode (MIPI DCS 0x2E = Memory Read)
+  LCD_WR_REG(0x2E);
+  Delay_us(5);
   LCD_RD_DATA();          // mandatory dummy read
   uint32_t n = (uint32_t)w * h;
   for (uint32_t i = 0; i < n; i++)

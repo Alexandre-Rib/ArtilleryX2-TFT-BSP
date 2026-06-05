@@ -19,18 +19,7 @@
 void USR_KEYBRD_Init(void) {}
 void USR_KEYBRD_ProcessData(uint8_t ascii) { (void)ascii; }
 void USR_MOUSE_Init(void) {}
-
-// Accumulated mouse state — filled by the HID callback, consumed by Mouse_GetState()
-static int8_t  s_mouse_dx  = 0;
-static int8_t  s_mouse_dy  = 0;
-static uint8_t s_mouse_btn = 0;
-
-void USR_MOUSE_ProcessData(HID_MOUSE_Data_TypeDef *d)
-{
-    s_mouse_dx  += (int8_t)d->x;
-    s_mouse_dy  += (int8_t)d->y;
-    s_mouse_btn  = d->button;
-}
+void USR_MOUSE_ProcessData(HID_MOUSE_Data_TypeDef *d) { (void)d; }
 
 // Direct access to the HID report buffer (defined in usbh_hid_core.c).
 // For keyboard Boot Protocol: buff[0]=modifiers, buff[1]=reserved, buff[2..7]=keycodes.
@@ -238,12 +227,6 @@ bool Keyboard_IsConnected(void)
       && HID_Machine.cb == &HID_KEYBRD_cb;
 }
 
-bool Mouse_IsConnected(void)
-{
-  return HCD_IsDeviceConnected(&USB_OTG_Core)
-      && HID_Machine.cb == &HID_MOUSE_cb;
-}
-
 bool Joystick_IsConnected(void)
 {
   return HCD_IsDeviceConnected(&USB_OTG_Core)
@@ -346,29 +329,3 @@ char Keyboard_ToChar(uint8_t keycode, uint8_t modifiers)
   }
 }
 
-// ---------------------------------------------------------------------------
-// Mouse state
-// ---------------------------------------------------------------------------
-
-void Mouse_GetState(int8_t *dx, int8_t *dy, uint8_t *buttons)
-{
-  if (!Mouse_IsConnected()) {
-    if (dx)      *dx      = 0;
-    if (dy)      *dy      = 0;
-    if (buttons) *buttons = 0;
-    s_mouse_dx  = 0;
-    s_mouse_dy  = 0;
-    s_mouse_btn = 0;
-    return;
-  }
-  if (dx)      *dx      = s_mouse_dx;
-  if (dy)      *dy      = s_mouse_dy;
-  if (buttons) *buttons = s_mouse_btn;
-  s_mouse_dx = 0;
-  s_mouse_dy = 0;
-}
-
-uint8_t Mouse_GetButtons(void)
-{
-  return Mouse_IsConnected() ? s_mouse_btn : 0u;
-}

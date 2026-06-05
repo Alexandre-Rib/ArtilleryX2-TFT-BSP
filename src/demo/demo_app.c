@@ -33,7 +33,6 @@
 #include "font_embedded.h"
 #include "settings.h"
 #include "scene_image.h"
-#include "scene_anim.h"
 #include "scene_sound.h"
 #include "scene_controllers.h"
 #include "scene_calib.h"
@@ -44,7 +43,6 @@
 #include "GUI.h"
 #include "LCD_Colors.h"
 #include "os_timer.h"
-#include "mouse_cursor.h"
 #include <stddef.h>
 #include <stdbool.h>
 
@@ -58,58 +56,52 @@ typedef struct {
 } Scene_t;
 
 // ---------------------------------------------------------------------------
-// Main menu geometry — 3x2 grid filling 320x240 with 8-pixel gaps
+// Main menu geometry — 2×2 grid filling 320×240 with 8-pixel gaps
+//   BTN_W = (320 - 3*8) / 2 = 148
+//   BTN_H = (240 - 3*8) / 2 = 108
 // ---------------------------------------------------------------------------
-#define MENU_COLS  3
+#define MENU_COLS  2
 #define MENU_ROWS  2
 #define BTN_GAP    8
-#define BTN_W      ((LCD_WIDTH  - (MENU_COLS + 1) * BTN_GAP) / MENU_COLS)   // 96
+#define BTN_W      ((LCD_WIDTH  - (MENU_COLS + 1) * BTN_GAP) / MENU_COLS)   // 148
 #define BTN_H      ((LCD_HEIGHT - (MENU_ROWS + 1) * BTN_GAP) / MENU_ROWS)   // 108
 
 #define BTN_X(col) (BTN_GAP + (col) * (BTN_W + BTN_GAP))
 #define BTN_Y(row) (BTN_GAP + (row) * (BTN_H + BTN_GAP))
 
-// Image area inside each button:
-//   icon  80x80 centered horizontally, 4px from top
-//   label remaining space at the bottom
-#define ICON_X_OFF  ((BTN_W - (int16_t)RES_IMG_W) / 2)   // 8 px
+#define ICON_X_OFF  ((BTN_W - (int16_t)RES_IMG_W) / 2)   // 34 px
 #define ICON_Y_OFF  4
-#define LABEL_Y_OFF (ICON_Y_OFF + (int16_t)RES_IMG_H + 2) // just below icon
+#define LABEL_Y_OFF (ICON_Y_OFF + (int16_t)RES_IMG_H + 2)
 
 // ---------------------------------------------------------------------------
 // Forward declarations
 // ---------------------------------------------------------------------------
 static void action_open_image(void);
 static void action_open_sound(void);
-static void action_open_anim(void);
 static void action_open_calib(void);
-static void action_open_keyboard(void);
+static void action_open_ctrl(void);
 
 static void draw_btn_0(bool focused);
 static void draw_btn_1(bool focused);
 static void draw_btn_2(bool focused);
 static void draw_btn_3(bool focused);
-static void draw_btn_4(bool focused);
-static void draw_btn_5(bool focused);
 
 // ---------------------------------------------------------------------------
-// Main menu — 6 items, 3 columns
+// Main menu — 4 items, 2×2
 // ---------------------------------------------------------------------------
-// Grid layout (3×2):
-//   [0 IMAGE ][1 SOUND][2 ANIM ]
-//   [3 CALIB ][4 KEYS ][5 ---  ]
-static MenuItem_t main_items[6] = {
-    { { BTN_X(0), BTN_Y(0), BTN_W, BTN_H, NULL, BUTTON_NORMAL   }, action_open_image,    draw_btn_0 },
-    { { BTN_X(1), BTN_Y(0), BTN_W, BTN_H, NULL, BUTTON_NORMAL   }, action_open_sound,    draw_btn_1 },
-    { { BTN_X(2), BTN_Y(0), BTN_W, BTN_H, NULL, BUTTON_NORMAL   }, action_open_anim,     draw_btn_2 },
-    { { BTN_X(0), BTN_Y(1), BTN_W, BTN_H, NULL, BUTTON_NORMAL   }, action_open_calib,    draw_btn_3 },
-    { { BTN_X(1), BTN_Y(1), BTN_W, BTN_H, NULL, BUTTON_NORMAL   }, action_open_keyboard, draw_btn_4 },
-    { { BTN_X(2), BTN_Y(1), BTN_W, BTN_H, NULL, BUTTON_DISABLED }, NULL,                 draw_btn_5 },
+// Grid layout:
+//   [0 IMAGE][1 SOUND]
+//   [2 CALIB][3 CTRL ]
+static MenuItem_t main_items[4] = {
+    { { BTN_X(0), BTN_Y(0), BTN_W, BTN_H, NULL, BUTTON_NORMAL }, action_open_image, draw_btn_0 },
+    { { BTN_X(1), BTN_Y(0), BTN_W, BTN_H, NULL, BUTTON_NORMAL }, action_open_sound, draw_btn_1 },
+    { { BTN_X(0), BTN_Y(1), BTN_W, BTN_H, NULL, BUTTON_NORMAL }, action_open_calib, draw_btn_2 },
+    { { BTN_X(1), BTN_Y(1), BTN_W, BTN_H, NULL, BUTTON_NORMAL }, action_open_ctrl,  draw_btn_3 },
 };
 
 static Menu_t main_menu = {
     .items   = main_items,
-    .count   = 6,
+    .count   = 4,
     .cols    = MENU_COLS,
     .focused = 0,
     .parent  = NULL,
@@ -118,13 +110,11 @@ static Menu_t main_menu = {
 // ---------------------------------------------------------------------------
 // Scene table — indexed by main_items slot
 // ---------------------------------------------------------------------------
-static const Scene_t scenes[6] = {
-    { SceneImage_OnEnter,    SceneImage_OnUpdate,    SceneImage_OnExit    }, // 0 IMAGE
-    { SceneSound_OnEnter,    SceneSound_OnUpdate,    SceneSound_OnExit    }, // 1 SOUND
-    { SceneAnim_OnEnter,     SceneAnim_OnUpdate,     SceneAnim_OnExit     }, // 2 ANIM
-    { SceneCalib_OnEnter,    SceneCalib_OnUpdate,    SceneCalib_OnExit    }, // 3 CALIB
-    { SceneControllers_OnEnter, SceneControllers_OnUpdate, SceneControllers_OnExit }, // 4 CTRL
-    { NULL, NULL, NULL },                                                     // 5 ---
+static const Scene_t scenes[4] = {
+    { SceneImage_OnEnter,       SceneImage_OnUpdate,       SceneImage_OnExit       }, // 0 IMAGE
+    { SceneSound_OnEnter,       SceneSound_OnUpdate,       SceneSound_OnExit       }, // 1 SOUND
+    { SceneCalib_OnEnter,       SceneCalib_OnUpdate,       SceneCalib_OnExit       }, // 2 CALIB
+    { SceneControllers_OnEnter, SceneControllers_OnUpdate, SceneControllers_OnExit }, // 3 CTRL
 };
 
 // ---------------------------------------------------------------------------
@@ -175,25 +165,19 @@ static void menu_draw_btn(uint8_t idx, const char *img_name,
     Font_DrawStringCentered(bx, lbl_y0, bx + BTN_W, lbl_y1, label, 1, lbl_c);
 }
 
-static void draw_btn_0(bool f) { menu_draw_btn(0, "picture",         true,  "IMAGE", f); }
-static void draw_btn_1(bool f) { menu_draw_btn(1, "sound",           true,  "SOUND", f); }
-static void draw_btn_2(bool f) { menu_draw_btn(2, "animation",       true,  "ANIM",  f); }
-static void draw_btn_3(bool f) { menu_draw_btn(3, "calibration",     true,  "CALIB", f); }
-static void draw_btn_4(bool f) { menu_draw_btn(4, "general_control", true,  "CTRL",  f); }
-static void draw_btn_5(bool f) { menu_draw_btn(5, "undef_menu",      false, "---",   f); }
+static void draw_btn_0(bool f) { menu_draw_btn(0, "picture",         true, "IMAGE", f); }
+static void draw_btn_1(bool f) { menu_draw_btn(1, "sound",           true, "SOUND", f); }
+static void draw_btn_2(bool f) { menu_draw_btn(2, "calibration",     true, "CALIB", f); }
+static void draw_btn_3(bool f) { menu_draw_btn(3, "general_control", true, "CTRL",  f); }
 
 // ---------------------------------------------------------------------------
 // Scene transitions
 // ---------------------------------------------------------------------------
 static void enter_scene(int8_t index)
 {
-    if (index < 0 || index >= 6) return;
-    if (!scenes[index].on_enter) return;
-
+    if (index < 0 || index >= 4) return;
     active_scene_index = index;
     exit_requested     = false;
-    // on_enter() clears the screen — cursor save-under is no longer valid
-    MouseCursor_Invalidate();
     scenes[index].on_enter();
 }
 
@@ -201,27 +185,20 @@ static void exit_scene(void)
 {
     if (active_scene_index >= 0 && scenes[active_scene_index].on_exit)
         scenes[active_scene_index].on_exit();
-
     active_scene_index = -1;
     exit_requested     = false;
-
-    // Screen is about to be fully redrawn — invalidate cursor save-under
-    MouseCursor_Invalidate();
     main_items[main_menu.focused].button.state = BUTTON_FOCUSED;
     GUI_Clear(BLACK);
     Menu_Draw(&main_menu);
 }
 
-static void action_open_image(void)    { enter_scene(0); }
-static void action_open_sound(void)    { enter_scene(1); }
-static void action_open_anim(void)     { enter_scene(2); }
-static void action_open_calib(void)    { enter_scene(3); }
-static void action_open_keyboard(void) { enter_scene(4); }
+static void action_open_image(void) { enter_scene(0); }
+static void action_open_sound(void) { enter_scene(1); }
+static void action_open_calib(void) { enter_scene(2); }
+static void action_open_ctrl(void)  { enter_scene(3); }
 
-/* Redraw the current screen after an overlay (LPC countdown) has been dismissed. */
 static void restore_current_screen(void)
 {
-    MouseCursor_Invalidate();
     if (active_scene_index >= 0 && scenes[active_scene_index].on_enter) {
         scenes[active_scene_index].on_enter();
     } else {
@@ -301,14 +278,10 @@ void DemoApp_Run(void)
         Keyboard_Process();
         Mega9_Process();
 
-        // Erase cursor before any drawing (restores background or no-op if hidden)
-        MouseCursor_Hide();
-
         uint32_t          now_ms = OS_GetTimeMs();
         NavigationEvent_t event  = Navigation_Poll();
 
         if (lpc_calib_active) {
-            // Long-press calibration scene running — intercept exit to restore previous screen.
             bool consumed = SceneCalib_OnUpdate(now_ms, event);
             if (exit_requested || (!consumed && event == NAVIGATION_BACK)) {
                 DemoApp_CancelExit();
@@ -318,7 +291,6 @@ void DemoApp_Run(void)
                 restore_current_screen();
             }
         } else if (!LongpressCalib_IsBlocking()) {
-            // Normal operation — process scenes / main menu.
             if (active_scene_index >= 0) {
                 bool consumed = scenes[active_scene_index].on_update(now_ms, event);
                 if (exit_requested || (event == NAVIGATION_BACK && !consumed))
@@ -328,22 +300,16 @@ void DemoApp_Run(void)
                 (void)result;
             }
         }
-        // else: LPC overlay blocking (countdown / wait-release / 2-s hold-off) — scenes frozen.
 
-        // Long-press update — overlay drawn on top of current screen.
         if (!lpc_calib_active) {
             LpcStatus_t lpc = LongpressCalib_Update(now_ms);
             if (lpc == LPC_LAUNCH) {
                 lpc_calib_active = true;
-                MouseCursor_Invalidate();
                 SceneCalib_OnEnterProcedure();
             } else if (lpc == LPC_CANCELLED) {
                 restore_current_screen();
             }
         }
 
-        // Redraw cursor on top of the freshly-rendered frame.
-        if (Mouse_IsConnected())
-            MouseCursor_Show();
     }
 }

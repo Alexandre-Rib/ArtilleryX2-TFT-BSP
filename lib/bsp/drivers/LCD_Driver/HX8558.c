@@ -131,8 +131,8 @@ void HX8558_SetWindow(uint16_t sx, uint16_t sy, uint16_t ex, uint16_t ey)
 uint32_t HX8558_ReadPixel_24Bit(int16_t x, int16_t y)
 {
   HX8558_SetWindow(x, y, x, y);
-  LCD_WR_REG(0X22);
-  Delay_us(1);
+  LCD_WR_REG(0x2E);  // MIPI DCS Memory Read
+  Delay_us(5);
   LCD_RD_DATA();  // Dummy read
 
   uint16_t pix = LCD_RD_DATA();

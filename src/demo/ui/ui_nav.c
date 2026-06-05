@@ -13,14 +13,14 @@
 #include "xpt2046.h"
 #include "os_timer.h"
 #include "mks_tft28.h"
-#include "mouse_cursor.h"
 #include <stdbool.h>
 
 // ---------------------------------------------------------------------------
 // Keyboard auto-repeat timing
 // ---------------------------------------------------------------------------
-#define REPEAT_DELAY_MS  400u   // hold duration before the first repeat fires
-#define REPEAT_RATE_MS   120u   // interval between subsequent repeats
+#define REPEAT_DELAY_MS  400u
+#define REPEAT_RATE_MS   120u
+
 
 // ---------------------------------------------------------------------------
 // Touch orientation — adjust these three flags to match the panel mounting.
@@ -55,7 +55,6 @@ static bool     touch_prev_pen  = false;
 static int16_t  touch_last_x    = 0;
 static int16_t  touch_last_y    = 0;
 
-static uint8_t  mouse_prev_btn  = 0;
 
 static uint8_t  gp_prev_dir     = 0;
 static uint32_t gp_dir_time     = 0;
@@ -241,40 +240,6 @@ static NavigationEvent_t poll_gamepad(void)
     return NAVIGATION_NONE;
 }
 
-/**
- * @brief  Poll the USB HID mouse for movement and button events.
- *
- *  Calls MouseCursor_MoveDelta() to keep cursor position up-to-date.
- *  Left-button press (rising edge) is translated to NAVIGATION_TOUCH at the
- *  cursor hotspot position, matching touchscreen tap semantics.
- *
- * @return NAVIGATION_TOUCH on LMB press; NAVIGATION_NONE otherwise.
- */
-static NavigationEvent_t poll_mouse(void)
-{
-    if (!Mouse_IsConnected()) {
-        mouse_prev_btn = 0;
-        return NAVIGATION_NONE;
-    }
-
-    int8_t  dx, dy;
-    uint8_t buttons;
-    Mouse_GetState(&dx, &dy, &buttons);
-
-    if (dx != 0 || dy != 0)
-        MouseCursor_MoveDelta(dx, dy);
-
-    uint8_t lmb = buttons & MOUSE_BTN_LEFT;
-    NavigationEvent_t ev = NAVIGATION_NONE;
-
-    if (lmb && !mouse_prev_btn) {
-        // Rising edge — treat as a touch tap at the cursor hotspot
-        MouseCursor_GetPos(&touch_last_x, &touch_last_y);
-        ev = NAVIGATION_TOUCH;
-    }
-    mouse_prev_btn = lmb;
-    return ev;
-}
 
 /**
  * @brief  Poll the touch screen for a rising-edge tap event.
@@ -328,27 +293,19 @@ void Navigation_Init(void)
     touch_prev_pen  = false;
     touch_last_x    = 0;
     touch_last_y    = 0;
-    mouse_prev_btn  = 0;
     gp_prev_dir     = 0;
     gp_dir_time     = 0;
     gp_repeat_armed = false;
-    MouseCursor_Init();
 }
 
 NavigationEvent_t Navigation_Poll(void)
 {
     uint32_t now_ms = OS_GetTimeMs();
 
-    // Keyboard takes priority
     NavigationEvent_t event = poll_keyboard(now_ms);
     if (event != NAVIGATION_NONE) return event;
 
-    // Gamepad (same priority as keyboard, above touch)
     event = poll_gamepad();
-    if (event != NAVIGATION_NONE) return event;
-
-    // Mouse — updates cursor position and generates synthetic NAVIGATION_TOUCH
-    event = poll_mouse();
     if (event != NAVIGATION_NONE) return event;
 
     return poll_touch();

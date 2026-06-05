@@ -109,4 +109,5 @@ void Navigation_FlushKeyboard(void);
 void Navigation_GetTouchCalibration(uint16_t *x_min, uint16_t *x_max,
                                     uint16_t *y_min, uint16_t *y_max);
 
+
 #endif
