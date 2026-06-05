@@ -48,6 +48,10 @@ carte, par exemple :
 - **Buzzer PWM** — pilote TIM5_CH3 sur PA2 avec contrôle de fréquence et de volume
 - **LCD burst fill** — `LCD_FillColor(color, count)` : CS/RS positionnés une seule fois pour N pixels, 3 ops GPIO/pixel au lieu de 6 (~2× plus rapide sur les fills)
 - **Clavier USB HID** — Boot Protocol, layouts QWERTY/AZERTY/QWERTZ, lecture d'état en continu
+- **Joystick USB HID** — callback générique (`HID_GENERIC_cb`), `Joystick_IsConnected()` pour périphériques HID custom (ex. Arduino Micro / pont Mega Drive)
+- **Détection de type périphérique USB** — `Keyboard_IsConnected()` / `Joystick_IsConnected()` par `HID_Machine.cb` ; `USB_GetDiagStr()` retourne une chaîne de diagnostic compacte
+- **Watchdog reconnexion USB** — `Keyboard_Process()` limité à 1 appel/ms ; réinit automatique après 2 s bloqué en état déconnecté
+- **`LCD_ReadPixels(x, y, w, h, buf)`** — lecture GRAM en rafale via commande MIPI DCS 0x2E, délai 5 µs après la commande
 
 ## Pré-requis
 
@@ -258,6 +262,10 @@ This BSP is designed as a foundation for standalone embedded projects on this bo
 - **Buzzer PWM** — TIM5_CH3 driver on PA2 with frequency and volume control
 - **LCD burst fill** — `LCD_FillColor(color, count)`: CS/RS set once for N pixels, 3 GPIO ops/pixel instead of 6 (~2× faster fills)
 - **USB HID keyboard** — Boot Protocol, QWERTY/AZERTY/QWERTZ layouts, continuous key-state reading
+- **USB HID joystick** — Generic HID callback (`HID_GENERIC_cb`), `Joystick_IsConnected()` for custom HID devices (e.g. Arduino Micro / Mega Drive bridge)
+- **USB device-type detection** — `Keyboard_IsConnected()` / `Joystick_IsConnected()` distinguish device type via `HID_Machine.cb`; `USB_GetDiagStr()` returns a compact debug string
+- **USB reconnect watchdog** — `Keyboard_Process()` rate-limited to 1 ms; auto-reinit after 2 s stuck in disconnected state
+- **`LCD_ReadPixels(x, y, w, h, buf)`** — bulk GRAM read-back via MIPI DCS 0x2E (Memory Read), 5 µs post-command delay
 
 ## Prerequisites
 

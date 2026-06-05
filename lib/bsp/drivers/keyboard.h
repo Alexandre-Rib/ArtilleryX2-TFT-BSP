@@ -74,8 +74,16 @@ void     Keyboard_Init(void);
 // Must be called repeatedly from the main loop
 void     Keyboard_Process(void);
 
-// Returns true if a keyboard is connected and enumerated
+// Returns true only if a Boot Protocol keyboard is connected and enumerated
 bool     Keyboard_IsConnected(void);
+
+
+// Returns true only if a custom HID joystick (Arduino Micro) is connected
+bool     Joystick_IsConnected(void);
+
+// Debug: returns a static string describing the current raw USB HID state.
+// Format: "USB:cb=JOY st=POLL b01.00"  (cb type, HID state, first 2 report bytes)
+const char *USB_GetDiagStr(void);
 
 // Current keycode from the HID report buffer (0 if no key held)
 uint8_t  Keyboard_GetKeycode(void);
@@ -92,5 +100,6 @@ void     Keyboard_SetLayout(KB_LAYOUT layout);
 
 // Returns true if a new key-press event occurred since the last call
 bool     Keyboard_HasNewKey(void);
+
 
 #endif

@@ -12,17 +12,25 @@
 #include "usbh_hid_keybd.h"
 #include "usbh_usr.h"       // USB_OTG_Core, USB_Host
 #include "usbh_core.h"      // USBH_Process, USBH_Init
+#include "os_timer.h"
 
 // Required stubs for usbh_hid_keybd.c and usbh_hid_mouse.c
 #include "usbh_hid_mouse.h"
 void USR_KEYBRD_Init(void) {}
-void USR_KEYBRD_ProcessData(uint8_t ascii)           { (void)ascii; }
-void USR_MOUSE_Init(void)                            {}
-void USR_MOUSE_ProcessData(HID_MOUSE_Data_TypeDef *d){ (void)d; }
+void USR_KEYBRD_ProcessData(uint8_t ascii) { (void)ascii; }
+void USR_MOUSE_Init(void) {}
+void USR_MOUSE_ProcessData(HID_MOUSE_Data_TypeDef *d) { (void)d; }
 
-// Direct access to the HID Boot Protocol report buffer (defined in usbh_hid_core.c).
-// buff[0] = modifiers, buff[1] = reserved, buff[2..7] = currently pressed keycodes
+// Direct access to the HID report buffer (defined in usbh_hid_core.c).
+// For keyboard Boot Protocol: buff[0]=modifiers, buff[1]=reserved, buff[2..7]=keycodes.
+// For custom HID joystick (Report ID 1):  buff[0]=0x01, buff[1]=button bitmask.
 extern HID_Machine_TypeDef HID_Machine;
+
+// Stub callback for non-keyboard/non-mouse HID devices.
+// Raw report bytes land in HID_Machine.buff[] without decoding.
+static void Generic_HID_Init(void)             {}
+static void Generic_HID_Decode(uint8_t *data)  { (void)data; }
+HID_cb_TypeDef HID_GENERIC_cb = { Generic_HID_Init, Generic_HID_Decode };
 
 // ---------------------------------------------------------------------------
 // Keycode-to-byte lookup tables (ISO-8859-1 for accented characters)
@@ -171,12 +179,117 @@ void Keyboard_Init(void)
 
 void Keyboard_Process(void)
 {
+  // Rate-limit to once per ms — the ST USB Host library was designed
+  // for ~1ms call rate; calling it 100k×/s can produce spurious OTG FS
+  // register activity that occasionally triggers false disconnect interrupts.
+  static uint32_t s_last_ms    = UINT32_MAX;
+  static uint32_t s_disconn_ms = 0;
+
+  uint32_t now = OS_GetTimeMs();
+  if (now == s_last_ms)
+    return;
+  s_last_ms = now;
+
   USBH_Process(&USB_OTG_Core, &USB_Host);
+
+  // Reconnect watchdog: if the USB host state machine gets stuck in
+  // disconnected state (PRTCONNDET missed after HCD_Init), force a
+  // full re-init after 2 s rather than staying dead indefinitely.
+  if (HCD_IsDeviceConnected(&USB_OTG_Core)) {
+    s_disconn_ms = 0;
+  } else {
+    if (s_disconn_ms == 0)
+      s_disconn_ms = now ? now : 1u;
+    else if (now - s_disconn_ms > 2000u) {
+      s_disconn_ms = 0;
+      Keyboard_Init();
+    }
+  }
 }
+
+// ---------------------------------------------------------------------------
+// Device-type detection
+//
+// HCD_IsDeviceConnected() is a raw hardware check — it returns true for any
+// USB device (hub, CDC Arduino, joystick, real keyboard…).  We distinguish
+// device types by inspecting HID_Machine.cb, which is set during enumeration:
+//   &HID_KEYBRD_cb  → Boot Protocol keyboard
+//   &HID_MOUSE_cb   → Boot Protocol mouse
+//   &HID_GENERIC_cb → custom HID (joystick / Arduino Micro)
+//   anything else   → hub, CDC, or unsupported device → ignore
+//
+// HID_Machine.state == HID_ERROR means InterfaceInit failed (device rejected).
+// ---------------------------------------------------------------------------
 
 bool Keyboard_IsConnected(void)
 {
-  return (uint8_t)HCD_IsDeviceConnected(&USB_OTG_Core);
+  return HCD_IsDeviceConnected(&USB_OTG_Core)
+      && HID_Machine.cb == &HID_KEYBRD_cb;
+}
+
+bool Joystick_IsConnected(void)
+{
+  return HCD_IsDeviceConnected(&USB_OTG_Core)
+      && HID_Machine.cb == &HID_GENERIC_cb;
+}
+
+// ---------------------------------------------------------------------------
+// Diagnostic — affiche l'état brut du stack USB HID pour déboguer
+// Retourne une chaîne statique, valide jusqu'au prochain appel.
+// ---------------------------------------------------------------------------
+const char *USB_GetDiagStr(void)
+{
+  static char buf[40];
+  const char hex[] = "0123456789ABCDEF";
+
+  if (!HCD_IsDeviceConnected(&USB_OTG_Core)) {
+    buf[0]='N'; buf[1]='O'; buf[2]=' ';
+    buf[3]='D'; buf[4]='E'; buf[5]='V'; buf[6]='I'; buf[7]='C'; buf[8]='E';
+    buf[9]='\0';
+    return buf;
+  }
+
+  // cb type
+  const char *cb_name;
+  if      (HID_Machine.cb == &HID_KEYBRD_cb)  cb_name = "KBD";
+  else if (HID_Machine.cb == &HID_MOUSE_cb)   cb_name = "MSE";
+  else if (HID_Machine.cb == &HID_GENERIC_cb) cb_name = "JOY";
+  else if (HID_Machine.cb == NULL)             cb_name = "cb=NULL";
+  else                                         cb_name = "cb=???";
+
+  // state
+  const char *st_name;
+  switch ((int)HID_Machine.state) {
+    case 0: st_name = "IDLE"; break;
+    case 1: st_name = "SDAT"; break;
+    case 2: st_name = "BUSY"; break;
+    case 3: st_name = "GDAT"; break;
+    case 4: st_name = "SYNC"; break;
+    case 5: st_name = "POLL"; break;
+    case 6: st_name = "ERR";  break;
+    default: st_name = "?";   break;
+  }
+
+  // Number of interfaces from the config descriptor (need USB_Host)
+  extern USBH_HOST USB_Host;
+  uint8_t n_itf = USB_Host.device_prop.Cfg_Desc.bNumInterfaces;
+
+  // Format: "KBD IDLE itf=3 b01.00"
+  int n = 0;
+  const char *p = cb_name; while (*p) buf[n++] = *p++;
+  buf[n++] = ' ';
+  p = st_name; while (*p) buf[n++] = *p++;
+  buf[n++] = ' ';
+  buf[n++] = 'i'; buf[n++] = '=';
+  buf[n++] = '0' + n_itf;
+  buf[n++] = ' ';
+  buf[n++] = hex[(HID_Machine.buff[0] >> 4) & 0xF];
+  buf[n++] = hex[HID_Machine.buff[0] & 0xF];
+  buf[n++] = '.';
+  buf[n++] = hex[(HID_Machine.buff[1] >> 4) & 0xF];
+  buf[n++] = hex[HID_Machine.buff[1] & 0xF];
+  buf[n] = '\0';
+  return buf;
 }
 
 uint8_t Keyboard_GetKeycode(void)
@@ -215,3 +328,4 @@ char Keyboard_ToChar(uint8_t keycode, uint8_t modifiers)
     default:               return (char) qwerty_map[shift][keycode];
   }
 }
+
